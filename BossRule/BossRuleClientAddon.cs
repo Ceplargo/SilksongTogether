@@ -91,6 +91,10 @@ internal class BossRuleClientAddon : ClientAddon {
         MultiHits.Username = () => clientApi.ClientManager.Username;
         MultiHits.PlayerObject = name => clientApi.ClientManager.Players
             .FirstOrDefault(p => p.Username == name && p.IsInLocalScene)?.PlayerObject;
+        ArenaWins.Send = (scene, state) => SendFollow(scene, "", state);
+        ArenaWins.SceneHost = MultiHits.SceneHost;
+        ArenaWins.NotSceneHost = GroundBells.NotSceneHost;
+        ArenaWins.CatalogRoom = scene => _bosses.Any(e => e.Scene == scene);
         receiver.RegisterPacketHandler<ArenaFollow>(BossPacketId.ArenaFollow, packet => {
             Debug.Log($"[BossRule] ArenaFollow received: {packet.State} ({packet.Scene})");
             if (GameManager.SilentInstance?.sceneName != packet.Scene) return;
@@ -103,6 +107,12 @@ internal class BossRuleClientAddon : ClientAddon {
             // the scene host's ground bell holder rose: this game's rises too, if it follows the scene host
             if (packet.State.StartsWith(GroundBells.Prefix)) {
                 GroundBells.Echo(packet.State.Substring(GroundBells.Prefix.Length));
+                return;
+            }
+
+            // the scene host's game won an ordinary arena: this game's ends too
+            if (packet.State.StartsWith(ArenaWins.Prefix)) {
+                ArenaWins.Received(packet.Scene, packet.State.Substring(ArenaWins.Prefix.Length));
                 return;
             }
 
@@ -202,6 +212,7 @@ internal class BossRuleClientAddon : ClientAddon {
         _spectate!.Tick();
         GroundBells.Tick();
         MultiHits.Tick();
+        ArenaWins.Tick();
     }
 
     /// <summary>

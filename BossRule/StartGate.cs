@@ -163,10 +163,10 @@ internal sealed class StartGate {
         if (BattleCompleted(battle)) battle.SendEventToChildren("BG OPEN");
     }
 
-    private static readonly AccessTools.FieldRef<BattleScene, bool> BattleStarted =
+    internal static readonly AccessTools.FieldRef<BattleScene, bool> BattleStarted =
         AccessTools.FieldRefAccess<BattleScene, bool>("started");
 
-    private static readonly AccessTools.FieldRef<BattleScene, bool> BattleCompleted =
+    internal static readonly AccessTools.FieldRef<BattleScene, bool> BattleCompleted =
         AccessTools.FieldRefAccess<BattleScene, bool>("completed");
 
     /// <summary>The room's own scene or one of its additive scenes (its boss scene: Bone_East_08_boss_golem).</summary>

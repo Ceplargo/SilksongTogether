@@ -19,6 +19,7 @@
         <Compile Include="..\BossRule\RiseWatch.cs" Link="RiseWatch.cs"/>
         <Compile Include="..\BossRule\EarlyRises.cs" Link="EarlyRises.cs"/>
         <Compile Include="..\BossRule\MultiHitPath.cs" Link="MultiHitPath.cs"/>
+        <Compile Include="..\BossRule\ArenaEnd.cs" Link="ArenaEnd.cs"/>
     </ItemGroup>
 
     <ItemGroup>
