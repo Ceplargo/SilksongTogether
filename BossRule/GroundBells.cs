@@ -73,7 +73,7 @@ internal static class GroundBells {
                 Debug.Log($"[BossRule] Ground Bell rise applied as it came out: {path}");
             }
 
-            if (!Watch.Rose(path, fsm.ActiveStateName)) continue;
+            if (!Watch.Rose(path, fsm.ActiveStateName, CountsQuickRises())) continue;
             if (!follows) {
                 Debug.Log($"[BossRule] Ground Bell rise sent: {path}");
                 Send?.Invoke(Prefix + path);
@@ -112,6 +112,13 @@ internal static class GroundBells {
     /// <summary>Whether a rise that comes before its holder is out and waiting is kept for it.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
     public static bool KeepsEarly() => true;
+
+    /// <summary>
+    /// The switch its proof turns off (a skipped bool method returns false): a rise counts only when the holder
+    /// was seen waiting first, so one that came out and rose within a frame is not sent (the 0.3.18 gate).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool CountsQuickRises() => true;
 
     /// <summary>
     /// The scene host's holder of that path rose: this game's rises too, now if it is out and waits, else as it comes

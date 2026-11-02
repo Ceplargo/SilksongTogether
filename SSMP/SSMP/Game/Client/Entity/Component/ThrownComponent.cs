@@ -132,6 +132,9 @@ internal class ThrownComponent : EntityComponent {
         public readonly PlayMakerFSM[] Fsms;
         public readonly byte[] States;
         public readonly Object[] Parts;
+
+        /// <summary>(coop) Its hero damagers, its children's included (StageDamage).</summary>
+        public readonly DamageHero[] Damagers;
         public Vector2 Position;
         public Vector2 Velocity;
         public float Time;
@@ -153,6 +156,7 @@ internal class ThrownComponent : EntityComponent {
             GameObject = gameObject;
             Fsms = FsmsOf(gameObject);
             Parts = PartsOf(gameObject);
+            Damagers = gameObject.GetComponentsInChildren<DamageHero>(true);
             States = new byte[Fsms.Length];
             Position = gameObject.transform.position;
             Time = UnityEngine.Time.time;
@@ -171,6 +175,9 @@ internal class ThrownComponent : EntityComponent {
         public readonly byte[] Given;
         public readonly Object[] Parts;
 
+        /// <summary>(coop) Its hero damagers, in the scene host's object's order (StageDamage).</summary>
+        public readonly DamageHero[] Damagers;
+
         /// <summary>
         /// (coop) Its body, if it has one with a collider of its own that is not a trigger: while that body is dynamic
         /// it hits the ground in the scene host's game, so its path never goes through it.
@@ -181,6 +188,7 @@ internal class ThrownComponent : EntityComponent {
             GameObject = gameObject;
             Fsms = FsmsOf(gameObject);
             Parts = PartsOf(gameObject);
+            Damagers = gameObject.GetComponentsInChildren<DamageHero>(true);
             if (gameObject.TryGetComponent<Rigidbody2D>(out var body) && System.Array.Exists(
                     gameObject.GetComponentsInChildren<Collider2D>(true), c => c.attachedRigidbody == body && !c.isTrigger)) {
                 SolidBody = body;
@@ -207,6 +215,9 @@ internal class ThrownComponent : EntityComponent {
         public readonly float[][] Floats = new float[MaxFsms][];
         public int FsmCount;
         public byte[] Parts = [];
+
+        /// <summary>(coop) Each hero damager's amount (StageDamage).</summary>
+        public byte[] Damages = [];
         public (byte Fsm, byte State, byte Action) Spawner = (NoState, NoState, NoState);
     }
 
@@ -474,6 +485,22 @@ internal class ThrownComponent : EntityComponent {
     ];
 
     /// <summary>
+    /// (coop) Other games: a copy's damagers deal what the scene host's do, after its own FSM has run (StageDamage).
+    /// </summary>
+    private static void FollowsDamage(Copy copy, byte[] damages) {
+        if (!StageDamage.Pairs(damages.Length, copy.Damagers.Length)) {
+            return;
+        }
+
+        for (var i = 0; i < copy.Damagers.Length; i++) {
+            if (copy.Damagers[i] != null && StageDamage.Of(damages, i) is { } damage &&
+                copy.Damagers[i].damageDealt != damage) {
+                copy.Damagers[i].damageDealt = damage;
+            }
+        }
+    }
+
+    /// <summary>
     /// Whether a part is on.
     /// </summary>
     private static bool IsOn(Object part) => part != null && part switch {
@@ -738,6 +765,13 @@ internal class ThrownComponent : EntityComponent {
             data.Packet.Write(part);
         }
 
+        // (coop) how much each of its damagers deals: an FSM can set it on a part it picked at random
+        var damages = StageDamage.Pack(System.Array.ConvertAll(followed.Damagers, d => d != null ? d.damageDealt : 0));
+        data.Packet.Write((byte) damages.Length);
+        foreach (var damage in damages) {
+            data.Packet.Write(damage);
+        }
+
         if (number < FirstStageNumber) {
             data.Packet.Write(followed.Spawner.Fsm);
             data.Packet.Write(followed.Spawner.State);
@@ -777,6 +811,7 @@ internal class ThrownComponent : EntityComponent {
             }
 
             FollowsParts(copy, target.Parts);
+            FollowsDamage(copy, target.Damages);
             var position = target.Position + target.Velocity * age;
             var transform = copy.GameObject.transform;
             // (coop) a prediction into the ground stops at the scene host's own last place: checked from the copy's place
@@ -924,6 +959,7 @@ internal class ThrownComponent : EntityComponent {
             }
 
             FollowsParts(copy, target.Parts);
+            FollowsDamage(copy, target.Damages);
         }
     }
 
@@ -1241,6 +1277,15 @@ internal class ThrownComponent : EntityComponent {
 
             for (var j = 0; j < partBytes; j++) {
                 target.Parts[j] = data.Packet.ReadByte();
+            }
+
+            var damageBytes = data.Packet.ReadByte();
+            if (target.Damages.Length != damageBytes) {
+                target.Damages = new byte[damageBytes];
+            }
+
+            for (var j = 0; j < damageBytes; j++) {
+                target.Damages[j] = data.Packet.ReadByte();
             }
 
             if (number < FirstStageNumber) {

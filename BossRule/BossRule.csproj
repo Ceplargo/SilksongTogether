@@ -6,6 +6,8 @@
         <LangVersion>latest</LangVersion>
         <Nullable>enable</Nullable>
         <Version>0.1.0</Version>
+        <!-- a release build names no folder of this PC (its debug file's path named the build's folder), as SSMP's -->
+        <PathMap Condition="'$(Configuration)' == 'Release'">$(MSBuildProjectDirectory)=source</PathMap>
     </PropertyGroup>
 
     <ItemGroup>

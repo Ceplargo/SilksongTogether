@@ -48,35 +48,79 @@ internal static partial class EntityFsmActions {
         return true;
     }
 
-    /// <summary>Applies network data to the FSM action.</summary>
+    /// <summary>
+    /// Applies network data to the FSM action. (coop) One that sets the scale every frame is set again each frame its
+    /// variables have moved on the copy (the scene host's FSM floats reach it: an eased Sickle Scale), until the state
+    /// ends (ScaleFollow).
+    /// </summary>
     private static void ApplyNetworkDataFromAction(EntityNetworkData? data, SetScale action) {
-        Vector3 scale;
-
         var gameObject = action.Fsm.GetOwnerDefaultTarget(action.gameObject);
-
-        if (data == null) {
-            scale = action.vector.IsNone ? gameObject.transform.localScale : action.vector.Value;
-
-            if (!action.x.IsNone) {
-                scale.x = action.x.Value;
-            }
-
-            if (!action.y.IsNone) {
-                scale.y = action.y.Value;
-            }
-
-            if (!action.z.IsNone) {
-                scale.z = action.z.Value;
-            }
-        } else {
-            scale = new Vector3(
+        Vector3? sent = data == null
+            ? null
+            : new Vector3(
                 data.Packet.ReadFloat(),
                 data.Packet.ReadFloat(),
                 data.Packet.ReadFloat()
             );
+        if (gameObject == null) {
+            return;
         }
 
+        var scale = sent ?? Read();
+
         gameObject.transform.localScale = scale;
+
+        if (!action.everyFrame || !ScaleFollow.Follows()) {
+            return;
+        }
+
+        var last = Read();
+        MonoBehaviourUtil.Instance.OnUpdateEvent += Follow;
+
+        new ActionInState {
+            Fsm = action.Fsm,
+            StateName = action.State.Name,
+            ExitAction = () => MonoBehaviourUtil.Instance.OnUpdateEvent -= Follow
+        }.Register();
+
+        return;
+
+        // only when moved, so a variable no replay moves never writes over the scale the scene host sent
+        void Follow() {
+            if (gameObject == null) {
+                // its object gone mid-state (a death, the room left): the state's end may never come here
+                MonoBehaviourUtil.Instance.OnUpdateEvent -= Follow;
+                return;
+            }
+
+            var now = Read();
+            if (!ScaleFollow.Changed(last.x, now.x) && !ScaleFollow.Changed(last.y, now.y) &&
+                !ScaleFollow.Changed(last.z, now.z)) {
+                return;
+            }
+
+            last = now;
+            gameObject.transform.localScale = now;
+        }
+
+        // As the action does it
+        Vector3 Read() {
+            var read = action.vector.IsNone ? gameObject.transform.localScale : action.vector.Value;
+
+            if (!action.x.IsNone) {
+                read.x = action.x.Value;
+            }
+
+            if (!action.y.IsNone) {
+                read.y = action.y.Value;
+            }
+
+            if (!action.z.IsNone) {
+                read.z = action.z.Value;
+            }
+
+            return read;
+        }
     }
 
     #endregion

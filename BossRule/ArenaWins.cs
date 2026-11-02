@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using UnityEngine;
@@ -36,6 +37,7 @@ internal static class ArenaWins {
     private static readonly HashSet<string> Won = new();
     private static string? _room;
     private static float _nextLook;
+    private static readonly RoomCatalog Rooms = new();
 
     /// <summary>
     /// Prefix on <c>BattleScene.DoEndBattle</c>: the scene host's game tells the room's other players its arena is won.
@@ -65,7 +67,7 @@ internal static class ArenaWins {
         var room = GameManager.SilentInstance?.sceneName;
         NewRoom(room);
         if (room == null || Time.unscaledTime < _nextLook || NotSceneHost?.Invoke() != true ||
-            CatalogRoom?.Invoke(room) != false) return;
+            Rooms.Skipped(room, CatalogRoom)) return;
         _nextLook = Time.unscaledTime + 0.5f;
         foreach (var battle in Object.FindObjectsByType<BattleScene>(FindObjectsSortMode.None)) {
             if (!battle.isActiveAndEnabled) continue;
@@ -87,9 +89,42 @@ internal static class ArenaWins {
         } else {
             StartGate.BattleStarted(battle) = false;
             if (battle.openGatesOnEnd) battle.SendEventToChildren("BG OPEN");
+            if (EndsRest() && battle.isActiveAndEnabled) battle.StartCoroutine(Rest(battle));
         }
 
         Debug.Log($"[BossRule] The arena {PathOf(battle.transform)} was won in the room: {step} here");
+    }
+
+    /// <summary>
+    /// The switch the twin turns off (a skipped bool method returns false): Open runs no more of the arena's end.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool EndsRest() => true;
+
+    /// <summary>
+    /// Open's rest of the game's own end (EndBattle), after its pause as the scene host's game had it: the arena's camera
+    /// locks off, its battle-only objects off, its end event and its end music. The shared save's BattleCompleted runs none
+    /// of them, so the battle music and a camera lock stayed in the game that does not run the room until its player left
+    /// (boss round six's probe: Shellwood_01b's music and lock, Room_Forge's lock B). Its end scene already took
+    /// BattleCompleted's BATTLE COMPLETED, so it gets no BATTLE END, which the scene host's game never sends after that
+    /// (the round's review).
+    /// </summary>
+    private static IEnumerator Rest(BattleScene battle) {
+        yield return new WaitForSeconds(battle.battleEndPause);
+        if (battle == null) yield break;
+        if (battle.camLocks != null && !battle.dontDisableCamlocksOnEnd) battle.camLocks.SetActive(false);
+        if (battle.activeDuringBattle != null) battle.activeDuringBattle.SetActive(false);
+        if (battle.disableActiveBeforeBattleAtEnd && battle.activeBeforeBattle != null) {
+            battle.activeBeforeBattle.SetActive(false);
+        }
+
+        if (!string.IsNullOrEmpty(battle.battleEndEventRegister)) EventRegister.SendEvent(battle.battleEndEventRegister);
+        if (battle.musicCueEnd != null) {
+            GameManager.instance.AudioManager.ApplyMusicCue(battle.musicCueEnd, 0f, 0f, applySnapshot: false);
+        }
+
+        if (battle.snapshotEnd != null) battle.snapshotEnd.TransitionTo(2f);
+        Debug.Log($"[BossRule] The arena {PathOf(battle.transform)}'s end ran here after its pause");
     }
 
     private static void NewRoom(string? room) {

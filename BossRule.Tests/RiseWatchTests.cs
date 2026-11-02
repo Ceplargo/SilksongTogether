@@ -26,6 +26,24 @@ public class RiseWatchTests {
     }
 
     [Fact]
+    public void A_holder_whose_wait_lasted_under_a_frame_is_told() {
+        // the 0.3.18 gate: her Charge brought Holder 3 out under her and it rose in the same long frame, so the look saw
+        // it put away (State 3), then up (State 2), never waiting
+        var watch = Holders();
+        watch.Rose("Holder 3", "State 1");
+        watch.Rose("Holder 3", "State 2");
+        watch.Rose("Holder 3", "State 3");
+        Assert.True(watch.Rose("Holder 3", "State 2"));
+    }
+
+    [Fact]
+    public void The_old_rule_misses_it() {
+        var watch = Holders();
+        watch.Rose("Holder 3", "State 3", quick: false);
+        Assert.False(watch.Rose("Holder 3", "State 2", quick: false));
+    }
+
+    [Fact]
     public void A_holder_first_seen_risen_is_not_told() {
         // a game entering the room while a holder is up did not see it rise
         Assert.False(Holders().Rose("Holder 3", "State 2"));

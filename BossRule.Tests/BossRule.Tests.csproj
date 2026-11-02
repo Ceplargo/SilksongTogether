@@ -20,6 +20,7 @@
         <Compile Include="..\BossRule\EarlyRises.cs" Link="EarlyRises.cs"/>
         <Compile Include="..\BossRule\MultiHitPath.cs" Link="MultiHitPath.cs"/>
         <Compile Include="..\BossRule\ArenaEnd.cs" Link="ArenaEnd.cs"/>
+        <Compile Include="..\BossRule\RoomCatalog.cs" Link="RoomCatalog.cs"/>
     </ItemGroup>
 
     <ItemGroup>
