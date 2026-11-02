@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <!-- BossRule's Unity-free files, compiled here without the game. -->
+    <ItemGroup>
+        <Compile Include="..\BossRule\WaitRule.cs" Link="WaitRule.cs"/>
+        <Compile Include="..\BossRule\BossCatalog.cs" Link="BossCatalog.cs"/>
+        <Compile Include="..\BossRule\FightTracker.cs" Link="FightTracker.cs"/>
+        <Compile Include="..\BossRule\BossScaling.cs" Link="BossScaling.cs"/>
+        <Compile Include="..\BossRule\MarkRecord.cs" Link="MarkRecord.cs"/>
+        <Compile Include="..\BossRule\Onward.cs" Link="Onward.cs"/>
+        <Compile Include="..\BossRule\CutsceneRun.cs" Link="CutsceneRun.cs"/>
+        <Compile Include="..\BossRule\CutsceneCatalog.cs" Link="CutsceneCatalog.cs"/>
+        <Compile Include="..\BossRule\RiseWatch.cs" Link="RiseWatch.cs"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0"/>
+        <PackageReference Include="xunit" Version="2.9.2"/>
+        <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2"/>
+        <!-- The game ships Newtonsoft.Json 13.0. -->
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.3"/>
+    </ItemGroup>
+
+</Project>

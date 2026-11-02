@@ -1,0 +1,702 @@
+[
+  {
+    "name": "opening",
+    "kind": "story",
+    "scenes": [
+      "Tut_01"
+    ],
+    "object": "Tutorial Intro Cutscene",
+    "fsm": "Control",
+    "start": [
+      "Hornet Down"
+    ],
+    "values": [
+      "bindCutscenePlayed"
+    ],
+    "how": "enter",
+    "note": "A new game starts in the cinematic scene Opening_Sequence (GameManager.StartNewGame), then Tut_01, where Hornet lies down at 1 mask until the player binds (ListenForCast). The Opening_Sequence part is the host's own: a cinematic scene, where no friend can be (SSMP's SceneUtil); the probe plays the Tut_01 part.",
+    "probe": {
+      "gate": "left2",
+      "length_s": 60
+    },
+    "follow": false
+  },
+  {
+    "name": "weakness_scene",
+    "kind": "story",
+    "scenes": [
+      "Tut_01",
+      "Tut_03"
+    ],
+    "object": "Weakness Scene",
+    "fsm": "Control",
+    "start": [
+      "Take Control"
+    ],
+    "values": [],
+    "how": "touch",
+    "probe": {
+      "at": "Weakness Scene",
+      "length_s": 60
+    },
+    "note": "The opening's weak walk: a trigger (Trigger2dEvent) takes control through a sub-FSM (RunFSM), the player walks the weak hero (ListenForRight and the other inputs), and a faint_fader blacks the screen as she faints, then she gets up (Resume: RegainControl).",
+    "follow": false
+  },
+  {
+    "name": "churchkeeper_intro",
+    "kind": "story",
+    "scenes": [
+      "Bonetown"
+    ],
+    "object": "Churchkeeper Intro Scene",
+    "fsm": "Control",
+    "start": [
+      "Wait for Hero Grounded"
+    ],
+    "values": [
+      "churchKeeperIntro",
+      "completedTutorial"
+    ],
+    "how": "touch",
+    "probe": {
+      "at": "Churchkeeper Intro Scene",
+      "length_s": 70
+    },
+    "note": "Bone Bottom's first entry: a trigger (WOUND) has the Churchkeeper hail Hornet, who collapses (Bonetown's Weakness Scene, its PD Bool churchKeeperIntro), wakes and talks; Set End sets churchKeeperIntro, completedTutorial and defeatedMossMother.",
+    "follow": false
+  },
+  {
+    "name": "bellhart_arrival",
+    "kind": "story",
+    "scenes": [
+      "Belltown"
+    ],
+    "object": "Cinematic Player",
+    "fsm": "Cutscene Control",
+    "start": [
+      "Init"
+    ],
+    "values": [
+      "SeenBelltownCutscene",
+      "visitedBellhart"
+    ],
+    "how": "enter",
+    "note": "Runs as the room loads: control taken at Init, a video (TriggerStartVideo), the camera up and down (StartFreeCameraMode, iTweenMoveTo), the area title, control back.",
+    "probe": {
+      "length_s": 45
+    },
+    "follow": false
+  },
+  {
+    "name": "bellhart_web",
+    "kind": "story",
+    "scenes": [
+      "Belltown"
+    ],
+    "object": "Webbed Hero",
+    "fsm": "Web Control",
+    "start": [
+      "Take Control"
+    ],
+    "values": [],
+    "follow": false,
+    "how": "enter",
+    "needs": {
+      "spinnerDefeated": false
+    },
+    "note": "Hornet wakes stuck in a web (Init tests spinnerDefeated and CheckIsFirstLevelForPlayer), struggles (ListenForAttack and the other inputs), breaks free and lands. Not followed: a wake-up on a continue or a join into Belltown (about 4 in 10, its Init's random cancel), each player's own; followed it would pull every player in Belltown into the web whenever one joined there.",
+    "probe": {
+      "length_s": 30
+    }
+  },
+  {
+    "name": "greymoor_crash",
+    "kind": "story",
+    "scenes": [
+      "Bone_East_11"
+    ],
+    "object": "Greymoor Entry/crashExit",
+    "fsm": "Control",
+    "start": [
+      "State 2"
+    ],
+    "values": [
+      "crashingIntoGreymoor"
+    ],
+    "how": "touch",
+    "note": "A trigger (Trigger2dEvent) takes control and sends the hero through the floor to Greymoor_01.",
+    "probe": {
+      "at": "crashExit",
+      "length_s": 15
+    },
+    "follow": false
+  },
+  {
+    "name": "judge_gate",
+    "kind": "story",
+    "scenes": [
+      "Coral_Judge_Arena"
+    ],
+    "object": "Boss Scene",
+    "fsm": "Control",
+    "start": [
+      "Gate Open To Cinematic"
+    ],
+    "values": [
+      "SeenLastJudgeGateOpen",
+      "visitedGrandGate"
+    ],
+    "how": "touch",
+    "needs": {
+      "defeatedLastJudge": true,
+      "SeenLastJudgeGateOpen": false,
+      "visitedCitadel": false
+    },
+    "note": "Act 1's end: after the Last Judge, walking to the gate (CheckTrackTriggerCount) plays the gate's video (StartCinematic) and moves the hero to the Citadel (Coral_10, left_firstEntrance).",
+    "probe": {
+      "at": "Gate Open Trigger",
+      "length_s": 45
+    },
+    "follow": false
+  },
+  {
+    "name": "mr_mushroom",
+    "kind": "story",
+    "scenes": [
+      "Tut_03",
+      "Bonetown",
+      "Bone_East_14b",
+      "Greymoor_06"
+    ],
+    "object": "Mr Mushroom NPC",
+    "fsm": "Control",
+    "start": [
+      "Rocket Start"
+    ],
+    "values": [
+      "MushroomQuestFound3"
+    ],
+    "how": "interact",
+    "note": "Each find of the Mr Mushroom quest (begun at Aqueduct_05's tablet): a talk, then he flies off in a rocket with the hero's control taken.",
+    "follow": false
+  },
+  {
+    "name": "lace_intro",
+    "kind": "intro",
+    "scenes": [
+      "Bone_East_12"
+    ],
+    "object": "Boss Scene/Lace Boss1",
+    "fsm": "Control",
+    "start": [
+      "Take Control 2"
+    ],
+    "values": [
+      "encounteredLace1"
+    ],
+    "how": "fight",
+    "note": "Her talk before her first fight takes control until its dialogue ends (End Dialogue 2).",
+    "probe": {
+      "flag": "defeatedLace1",
+      "length_s": 25
+    },
+    "follow": false
+  },
+  {
+    "name": "widow_intro",
+    "kind": "intro",
+    "scenes": [
+      "Belltown_Shrine"
+    ],
+    "object": "Black Thread States Thread Only Variant/Normal World/Boss Scene/Speak Region",
+    "fsm": "Dialogue",
+    "release": "End",
+    "start": [
+      "End"
+    ],
+    "values": [
+      "encounteredSpinner"
+    ],
+    "how": "interact",
+    "note": "Her room waits in Speak Ready for a talk at her Speak Region; its Dialogue ends in End, which shuts the talk place and sends SPOKEN: her room sends her out (Spinner Tele Out) and starts the battle (BATTLE START). Followed from End, so the scene host's game, which runs her, starts her fight whoever talked; the talk leaves the hero held until her roar, run only there, so the other games give theirs back at her start (bosses.json's release).",
+    "probe": {
+      "path": "Black Thread States Thread Only Variant/Normal World/Boss Scene/Speak Region",
+      "length_s": 40,
+      "watch": [
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene/Spinner Boss",
+          "Control"
+        ],
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene/Gates/Battle Gate",
+          "BG Control"
+        ],
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene/Gates/Battle Gate (1)",
+          "BG Control"
+        ],
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene/Gates/Battle Gate (2)",
+          "BG Control"
+        ]
+      ],
+      "walk_to": true
+    },
+    "needs": {
+      "spinnerDefeated": false
+    },
+    "follow": true
+  },
+  {
+    "name": "widow_win",
+    "kind": "memory",
+    "scenes": [
+      "Belltown_Shrine",
+      "Memory_Needolin"
+    ],
+    "object": "Black Thread States Thread Only Variant/Normal World/Boss Scene/Spinner Boss",
+    "fsm": "Control",
+    "start": [
+      "Hornet Dash"
+    ],
+    "values": [
+      "hasNeedolin",
+      "spinnerDefeated"
+    ],
+    "how": "fight",
+    "note": "Her death: the hero dashes in (control taken), binds her (BIND, then SHIFT), gets the Needolin (Final Bind Burst), wakes in Memory_Needolin (memory_orb_inspect), and comes back through Belltown_Shrine's door_wakeOnGround, whose SPINNER SEQUENCE END opens her gates (Set Sequence Completed: BG OPEN).",
+    "probe": {
+      "flag": "spinnerDefeated",
+      "kill": true,
+      "presses": {
+        "Can Bind": "BIND",
+        "Rebind Ready": "BIND"
+      },
+      "watch": [
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene",
+          "Control"
+        ],
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene/Bellshrine Sequence Bellhart/Bench Appear Sequence",
+          "Bench Appear"
+        ],
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene/Gates/Battle Gate",
+          "BG Control"
+        ],
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene/Gates/Battle Gate (1)",
+          "BG Control"
+        ],
+        [
+          "Black Thread States Thread Only Variant/Normal World/Boss Scene/Gates/Battle Gate (2)",
+          "BG Control"
+        ]
+      ],
+      "length_s": 120,
+      "talk": "Black Thread States Thread Only Variant/Normal World/Boss Scene/Speak Region"
+    },
+    "needs": {
+      "encounteredSpinner": false
+    },
+    "follow": false
+  },
+  {
+    "name": "phantom_parry",
+    "kind": "intro",
+    "scenes": [
+      "Organ_01"
+    ],
+    "object": "Boss Scene/Phantom",
+    "fsm": "Control",
+    "start": [
+      "Hornet Position"
+    ],
+    "values": [
+      "defeatedPhantom",
+      "hasParry"
+    ],
+    "how": "fight",
+    "note": "Her end: the parried hit (FINAL BLOCK), then a clash with the hero placed and control taken (Hornet Position, Final Parry) that gives the parry.",
+    "probe": {
+      "flag": "defeatedPhantom",
+      "kill": true,
+      "length_s": 40
+    },
+    "follow": false
+  },
+  {
+    "name": "silk_heart_bellbeast",
+    "kind": "memory",
+    "scenes": [
+      "Bone_05"
+    ],
+    "object": "Boss Scene/Silk Heart",
+    "fsm": "Control",
+    "start": [
+      "Take Control"
+    ],
+    "values": [],
+    "how": "touch",
+    "needs": {
+      "defeatedBellBeast": true
+    },
+    "note": "After the Bell Beast its Silk Heart bobs where it fell; touching it (Trigger2dEvent) loads Memory_Silk_Heart_BellBeast, and Silk Heart Memory Return brings the hero back.",
+    "probe": {
+      "at": "Silk Heart",
+      "length_s": 60
+    },
+    "follow": false
+  },
+  {
+    "name": "silk_heart_songgolem",
+    "kind": "memory",
+    "scenes": [
+      "Bone_East_08"
+    ],
+    "object": "Boss Scene/Silk Heart",
+    "fsm": "Control",
+    "start": [
+      "Take Control"
+    ],
+    "values": [],
+    "how": "touch",
+    "needs": {
+      "defeatedSongGolem": true
+    },
+    "note": "The same after the Fourth Chorus, to Memory_Silk_Heart_SongGolem.",
+    "probe": {
+      "at": "Silk Heart",
+      "length_s": 60
+    },
+    "follow": false
+  },
+  {
+    "name": "shrine_silkspear",
+    "kind": "ability",
+    "scenes": [
+      "Mosstown_02"
+    ],
+    "object": "Ability Scene/Shrine Weaver Ability",
+    "fsm": "Inspection",
+    "release": "Set Finished",
+    "start": [
+      "Look Back"
+    ],
+    "values": [
+      "hasNeedleThrow"
+    ],
+    "how": "bind",
+    "probe": {
+      "presses": {
+        "Bind Ready": "BIND",
+        "Bind Prompt": "BIND"
+      },
+      "length_s": 50
+    }
+  },
+  {
+    "name": "shrine_swift_step",
+    "kind": "ability",
+    "scenes": [
+      "Bone_East_05"
+    ],
+    "object": "Ability Scene (1)/Shrine Weaver Ability",
+    "fsm": "Inspection",
+    "release": "Set Finished",
+    "start": [
+      "Look Back"
+    ],
+    "values": [
+      "hasDash"
+    ],
+    "how": "bind",
+    "probe": {
+      "presses": {
+        "Bind Ready": "BIND",
+        "Bind Prompt": "BIND"
+      },
+      "length_s": 50
+    }
+  },
+  {
+    "name": "shrine_silk_charge",
+    "kind": "ability",
+    "scenes": [
+      "Crawl_05"
+    ],
+    "object": "Ability Scene (2)/Shrine Weaver Ability",
+    "fsm": "Inspection",
+    "release": "Set Finished",
+    "start": [
+      "Look Back"
+    ],
+    "values": [
+      "hasSilkCharge"
+    ],
+    "how": "bind",
+    "probe": {
+      "presses": {
+        "Bind Ready": "BIND",
+        "Bind Prompt": "BIND"
+      },
+      "length_s": 50
+    }
+  },
+  {
+    "name": "shrine_thread_storm",
+    "kind": "ability",
+    "scenes": [
+      "Greymoor_22"
+    ],
+    "object": "Ability Scene/Shrine Weaver Ability",
+    "fsm": "Inspection",
+    "start": [
+      "Look Back"
+    ],
+    "values": [
+      "hasThreadSphere"
+    ],
+    "how": "bind",
+    "probe": {
+      "presses": {
+        "Bind Ready": "BIND",
+        "Bind Prompt": "BIND"
+      },
+      "length_s": 50
+    },
+    "follow": false
+  },
+  {
+    "name": "shrine_cling_grip",
+    "kind": "ability",
+    "scenes": [
+      "Shellwood_10"
+    ],
+    "object": "Ability Scene (1)/Shrine Weaver Ability",
+    "fsm": "Inspection",
+    "start": [
+      "Look Back"
+    ],
+    "values": [
+      "hasWalljump"
+    ],
+    "how": "bind",
+    "probe": {
+      "presses": {
+        "Bind Ready": "BIND",
+        "Bind Prompt": "BIND"
+      },
+      "length_s": 50
+    },
+    "follow": false
+  },
+  {
+    "name": "crest_beast",
+    "kind": "ability",
+    "scenes": [
+      "Ant_19"
+    ],
+    "object": "Crest Get Shrine",
+    "fsm": "Control",
+    "start": [
+      "Take Control"
+    ],
+    "values": [
+      "completedMemory_beast"
+    ],
+    "how": "bind",
+    "needs": {
+      "defeatedBoneFlyerGiant": true
+    },
+    "note": "A bind at the crest's rune (ListenForCast) takes control and loads its memory scene (Memory_Beast), which gives the crest.",
+    "probe": {
+      "presses": {
+        "Can Bind": "BIND"
+      },
+      "length_s": 60
+    },
+    "follow": false
+  },
+  {
+    "name": "crest_wanderer",
+    "kind": "ability",
+    "scenes": [
+      "Chapel_Wanderer"
+    ],
+    "object": "Group (1)/Crest Get Shrine",
+    "fsm": "Control",
+    "start": [
+      "Take Control"
+    ],
+    "values": [
+      "completedMemory_wanderer"
+    ],
+    "how": "bind",
+    "probe": {
+      "presses": {
+        "Can Bind": "BIND"
+      },
+      "length_s": 60
+    },
+    "follow": false
+  },
+  {
+    "name": "crest_reaper",
+    "kind": "ability",
+    "scenes": [
+      "Greymoor_20c"
+    ],
+    "object": "Crest Get Shrine",
+    "fsm": "Control",
+    "start": [
+      "Take Control"
+    ],
+    "values": [
+      "completedMemory_reaper"
+    ],
+    "how": "bind",
+    "probe": {
+      "presses": {
+        "Can Bind": "BIND"
+      },
+      "length_s": 60
+    },
+    "follow": false
+  },
+  {
+    "name": "drifters_cloak",
+    "kind": "ability",
+    "scenes": [
+      "Bone_East_Umbrella"
+    ],
+    "object": "_NPCs/Seamstress",
+    "fsm": "Dialogue",
+    "start": [
+      "Fade Up"
+    ],
+    "values": [
+      "hasBrolly"
+    ],
+    "how": "interact",
+    "note": "The Seamstress's talk ends in a video and the cloak (hasBrolly).",
+    "probe": {
+      "length_s": 60
+    },
+    "follow": false
+  },
+  {
+    "name": "charge_slash",
+    "kind": "ability",
+    "scenes": [
+      "Room_Pinstress"
+    ],
+    "object": "Pinstress States/Ground Sitting/Pinstress Interior Ground Sit",
+    "fsm": "Behaviour",
+    "start": [
+      "Reposition"
+    ],
+    "values": [
+      "hasChargeSlash"
+    ],
+    "how": "interact",
+    "note": "The Pinstress's lesson: a video and the needle strike (hasChargeSlash).",
+    "probe": {
+      "length_s": 60
+    },
+    "follow": false
+  },
+  {
+    "name": "needolin_memory",
+    "kind": "memory",
+    "scenes": [
+      "Ant_Queen",
+      "Aqueduct_06",
+      "Aqueduct_07",
+      "Bone_East_18b",
+      "Coral_Tower_01",
+      "Crawl_01",
+      "Crawl_10",
+      "Dock_02b",
+      "Greymoor_21",
+      "Shellwood_11b"
+    ],
+    "object": "thread_memory",
+    "fsm": "FSM",
+    "start": [
+      "Deep Memory Enter Fall"
+    ],
+    "values": [],
+    "how": "needolin",
+    "needs": {
+      "hasNeedolin": true
+    },
+    "note": "The Needolin played in its region (CheckHeroPerformanceRegion) takes control and moves the camera into a memory and back. Also as thread_memory vassal (Aqueduct_05, Aspid_01, Bone_East_14, Shellwood_26) and thread_memory_tank (Organ_01).",
+    "probe": {
+      "at": "thread_memory",
+      "length_s": 30
+    },
+    "follow": false
+  },
+  {
+    "name": "bellway_ride",
+    "kind": "travel",
+    "scenes": [
+      "Bellway_01",
+      "Bellway_02",
+      "Bellway_03",
+      "Bellway_04",
+      "Bellway_08",
+      "Bellway_Aqueduct",
+      "Belltown_basement",
+      "Bone_05",
+      "Shellwood_19"
+    ],
+    "object": "Bone Beast NPC",
+    "fsm": "Interaction",
+    "start": [
+      "Take Control"
+    ],
+    "values": [],
+    "how": "interact",
+    "note": "The bell rung, the Bell Beast comes, the rider picks a station and travels through the cinematic scene Cinematic_Stag_travel; at the station Hero Fling Out drops the hero.",
+    "follow": false
+  },
+  {
+    "name": "caravan_ride",
+    "kind": "travel",
+    "scenes": [
+      "Greymoor_08",
+      "Bone_10",
+      "Coral_Judge_Arena"
+    ],
+    "object": "Caravan",
+    "fsm": "Quest End Sequence",
+    "start": [
+      "Fade Down"
+    ],
+    "values": [
+      "CaravanTroupeLocation"
+    ],
+    "how": "interact",
+    "note": "The flea caravan moves on with the hero inside (Room_Caravan_Interior_Travel).",
+    "follow": false
+  },
+  {
+    "name": "farsight",
+    "kind": "cinematic",
+    "scenes": [
+      "Belltown_Room_Spare"
+    ],
+    "object": "Farsight Cinematic Player",
+    "fsm": "Sequence",
+    "start": [
+      "Cinematic"
+    ],
+    "values": [],
+    "how": "interact",
+    "note": "A video in Hornet's Bellhart room; what starts it is unknown from the dump (no trigger in its FSM).",
+    "follow": false
+  }
+]

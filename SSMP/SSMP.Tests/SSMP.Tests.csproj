@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <!-- SSMP's Unity-free files, compiled here without the game. -->
+    <ItemGroup>
+        <Compile Include="..\SSMP\Game\Server\Save\FirstJoinSave.cs" Link="Linked\FirstJoinSave.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\SaveKind.cs" Link="Linked\SaveKind.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\SaveSyncRules.cs" Link="Linked\SaveSyncRules.cs"/>
+        <Compile Include="..\SSMP\Game\Server\Save\ModSaveLifecycle.cs" Link="Linked\ModSaveLifecycle.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\ArrivalQueue.cs" Link="Linked\ArrivalQueue.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\Complex\MergeRule.cs" Link="Linked\MergeRule.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\Complex\EntryChange.cs" Link="Linked\EntryChange.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\Complex\ComplexFieldSpec.cs" Link="Linked\ComplexFieldSpec.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\Complex\ComplexFieldSpecs.cs" Link="Linked\ComplexFieldSpecs.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\Complex\ProjectionOps.cs" Link="Linked\ProjectionOps.cs"/>
+        <Compile Include="..\SSMP\Game\Server\UsernameRules.cs" Link="Linked\UsernameRules.cs"/>
+        <Compile Include="..\SSMP\Ui\Component\LobbyVisibility.cs" Link="Linked\LobbyVisibility.cs"/>
+        <Compile Include="..\SSMP\Networking\Matchmaking\Protocol\MmsModels.cs" Link="Linked\MmsModels.cs"/>
+        <Compile Include="..\SSMP\Game\Server\BugMark.cs" Link="Linked\BugMark.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\HeldSaveUpdates.cs" Link="Linked\HeldSaveUpdates.cs"/>
+        <Compile Include="..\SSMP\Game\Server\Save\AppliedSaveNumbers.cs" Link="Linked\AppliedSaveNumbers.cs"/>
+        <Compile Include="..\SSMP\Game\Server\Save\ActionClaims.cs" Link="Linked\ActionClaims.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\FleaCampSeats.cs" Link="Linked\FleaCampSeats.cs"/>
+        <Compile Include="..\SSMP\Game\Server\CoopAutoSave.cs" Link="Linked\CoopAutoSave.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Action\PickRules.cs" Link="Linked\PickRules.cs"/>
+        <Compile Include="..\SSMP\Networking\Packet\Pieces.cs" Link="Linked\Pieces.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\UpdateOrder.cs" Link="Linked\UpdateOrder.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\PartBits.cs" Link="Linked\PartBits.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\CatchPoint.cs" Link="Linked\CatchPoint.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\MissedHits.cs" Link="Linked\MissedHits.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\RemoteStuns.cs" Link="Linked\RemoteStuns.cs"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0"/>
+        <PackageReference Include="xunit" Version="2.9.2"/>
+        <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2"/>
+    </ItemGroup>
+
+</Project>

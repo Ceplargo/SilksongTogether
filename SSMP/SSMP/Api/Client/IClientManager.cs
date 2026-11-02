@@ -1,0 +1,117 @@
+using System;
+using System.Collections.Generic;
+using SSMP.Api.Server;
+using SSMP.Game;
+
+namespace SSMP.Api.Client;
+
+/// <summary>
+/// Client manager that handles the local client and related data.
+/// </summary>
+public interface IClientManager {
+    /// <summary>
+    /// Class that handles information about players.
+    /// </summary>
+    IPlayerManager PlayerManager { get; }
+
+    /// <summary>
+    /// Class that manages player locations on the in-game map.
+    /// </summary>
+    IMapManager MapManager { get; }
+    
+    /// <summary>
+    /// The current username of the local player.
+    /// </summary>
+    string Username { get; }
+
+    /// <summary>
+    /// The current team of the local player.
+    /// </summary>
+    [Obsolete("Use PlayerManager.LocalPlayerTeam instead.")]
+    Team Team { get; }
+
+    /// <summary>
+    /// A read-only collection of all connected players.
+    /// </summary>
+    IReadOnlyCollection<IClientPlayer> Players { get; }
+
+    /// <summary>
+    /// A read-only <see cref="IServerSettings"/> that contains the settings related to gameplay.
+    /// </summary>
+    IServerSettings ServerSettings { get; }
+
+    /// <summary>
+    /// A read-only <see cref="IModSettings"/> that contains the settings related to the client.
+    /// </summary>
+    IModSettings ModSettings { get; }
+
+    /// <summary>
+    /// Whether our game runs the enemies of the current scene (the first player in a scene does). As last set by the
+    /// server, when entering a scene or on a host transfer.
+    /// </summary>
+    bool IsSceneHost { get; }
+
+    /// <summary>
+    /// Event that is called each time the server sets whether we run the enemies of the current scene: on entering
+    /// a scene, and when the scene host changes. The value is the new <see cref="IsSceneHost"/>.
+    /// </summary>
+    event Action<bool> SceneHostChangedEvent;
+
+    /// <summary>
+    /// Set whether enemies may target the local player, in every player's game. While false, enemies leave the local
+    /// player alone and pick other players instead.
+    /// </summary>
+    /// <param name="targetable">Whether enemies may target the local player.</param>
+    void SetLocalPlayerTargetable(bool targetable);
+
+    /// <summary>
+    /// Disconnect the local client from the server.
+    /// </summary>
+    void Disconnect();
+
+    /// <summary>
+    /// Get a specific player by their ID.
+    /// </summary>
+    /// <param name="id">The ID of the player.</param>
+    /// <returns>The player with the given ID, or null if no such player exists.</returns>
+    IClientPlayer? GetPlayer(ushort id);
+
+    /// <summary>
+    /// Try to get a specific player by their ID.
+    /// </summary>
+    /// <param name="id">The ID of the player.</param>
+    /// <param name="player">The parameter that will contain the player if it exists.</param>
+    /// <returns>True if the player was found, false otherwise.</returns>
+    bool TryGetPlayer(ushort id, out IClientPlayer? player);
+
+    /// <summary>
+    /// Event that is called when the local user connects to a server.
+    /// </summary>
+    event Action ConnectEvent;
+
+    /// <summary>
+    /// Event that is called when the local user disconnects from the server.
+    /// </summary>
+    event Action DisconnectEvent;
+
+    /// <summary>
+    /// Event that is called when another player connects to the server.
+    /// </summary>
+    event Action<IClientPlayer> PlayerConnectEvent;
+
+    /// <summary>
+    /// Event that is called when another player disconnects from the server.
+    /// IClientPlayer could possibly be null.
+    /// </summary>
+    event Action<IClientPlayer> PlayerDisconnectEvent;
+
+    /// <summary>
+    /// Event that is called when another player enters the local scene.
+    /// </summary>
+    event Action<IClientPlayer> PlayerEnterSceneEvent;
+
+    /// <summary>
+    /// Event that is called when another player leaves the local scene.
+    /// </summary>
+    event Action<IClientPlayer> PlayerLeaveSceneEvent;
+}

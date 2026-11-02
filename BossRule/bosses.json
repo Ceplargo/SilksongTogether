@@ -1,0 +1,1194 @@
+[
+ {
+  "flag": "defeatedAntQueen",
+  "scene": "Memory_Ant_Queen",
+  "gate": "door_wakeInMemory",
+  "boss": "Hunter Queen Boss",
+  "start": {
+   "kind": "fsm",
+   "object": "Hunter Queen Boss",
+   "fsm": "Control",
+   "state": "BG Dance",
+   "event": "CHALLENGE"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 1500,
+  "phases": [
+   {
+    "object": "Hunter Queen Boss",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 524
+   },
+   {
+    "object": "Hunter Queen Boss",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 974
+   }
+  ]
+ },
+ {
+  "flag": "defeatedAntTrapper",
+  "scene": "Bone_East_18b",
+  "gate": "top1",
+  "boss": "Bone Hunter Trapper",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "Wait For Bench Break",
+   "event": "BENCH BREAK"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 1000,
+  "phases": [
+   {
+    "object": "Bone Hunter Trapper",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 600
+   },
+   {
+    "object": "Bone Hunter Trapper",
+    "fsm": "Control",
+    "var": "Rage HP",
+    "value": 400
+   }
+  ]
+ },
+ {
+  "flag": "defeatedBellBeast",
+  "scene": "Bone_05",
+  "gate": "left1",
+  "boss": "Bone Beast",
+  "start": {
+   "kind": "fsm",
+   "object": "Bone Beast",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "BATTLE START"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 150,
+  "phases": [
+   {
+    "object": "Bone Beast",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 120
+   },
+   {
+    "object": "Bone Beast",
+    "fsm": "Control",
+    "var": "Rage HP",
+    "value": 75
+   }
+  ]
+ },
+ {
+  "flag": "defeatedBoneFlyerGiant",
+  "scene": "Ant_19",
+  "gate": "left1",
+  "boss": "Bone Flyer Giant",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "Idle",
+   "event": "ENTER|EARLY ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Start Range|Early Start Range"
+  },
+  "needs": {},
+  "onward": [
+   {"object": "Boss Scene/Gates/Battle Gate Ant", "from": ["left1"]},
+   {"object": "Boss Scene/Top Blocker", "from": ["left1"]}
+  ],
+  "hp": 550,
+  "phases": [
+   {
+    "object": "Bone Flyer Giant",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 440
+   },
+   {
+    "object": "Bone Flyer Giant",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 247
+   }
+  ]
+ },
+ {
+  "flag": "defeatedBoneFlyerGiantGolemScene",
+  "scene": "Bone_East_08",
+  "gate": "left1",
+  "boss": "Bone Flyer Giant",
+  "start": {
+   "kind": "fsm",
+   "object": "Bone Flyer Giant",
+   "fsm": "Control",
+   "state": "Rematch Ready",
+   "event": "BATTLE START"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Wake Range"
+  },
+  "needs": {},
+  "bossScene": "Bone_East_08_boss_beastfly",
+  "hp": 650,
+  "phases": [
+   {
+    "object": "Bone Flyer Giant",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 520
+   },
+   {
+    "object": "Bone Flyer Giant",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 292
+   }
+  ]
+ },
+ {
+  "flag": "defeatedBroodMother",
+  "scene": "Slab_16b",
+  "gate": "left1",
+  "boss": "Slab Fly Broodmother",
+  "start": {
+   "kind": "battleScene",
+   "object": "Battle Scene Broodmother"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Battle Scene Broodmother"
+  },
+  "needs": {},
+  "hp": 700,
+  "phases": [
+   {
+    "object": "Slab Fly Broodmother",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 385
+   }
+  ]
+ },
+ {
+  "flag": "defeatedCloverDancers",
+  "scene": "Clover_10",
+  "gate": "left1",
+  "boss": "Dancer A|Dancer B",
+  "start": {
+   "kind": "fsm",
+   "object": "Dancer Control",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "BATTLE START"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 580,
+  "phases": []
+ },
+ {
+  "flag": "defeatedCogworkDancers",
+  "scene": "Cog_Dancers",
+  "gate": "bot1",
+  "boss": "Dancer A|Dancer B",
+  "start": {
+   "kind": "fsm",
+   "object": "Dancer Control",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Start Range"
+  },
+  "needs": {},
+  "hp": 190,
+  "phases": []
+ },
+ {
+  "flag": "defeatedCoralDrillers",
+  "scene": "Coral_11",
+  "gate": "left1",
+  "boss": "Driller A",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "Ready",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Start Region"
+  },
+  "needs": {},
+  "hp": 400,
+  "phases": []
+ },
+ {
+  "flag": "defeatedCoralDrillerSolo",
+  "scene": "Coral_27",
+  "gate": "left1",
+  "boss": "Coral Conch Driller Giant Solo",
+  "start": {
+   "kind": "battleScene",
+   "object": "Battle Scene"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Battle Scene"
+  },
+  "needs": {},
+  "hp": 820,
+  "phases": [
+   {
+    "object": "Coral Conch Driller Giant Solo",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 573
+   }
+  ]
+ },
+ {
+  "flag": "defeatedCoralKing",
+  "scene": "Memory_Coral_Tower",
+  "gate": "door_wakeInMemory",
+  "boss": "Coral King",
+  "start": {
+   "kind": "fsm",
+   "object": "Coral King",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "BATTLE START|BATTLE START REFIGHT"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 1650,
+  "phases": [
+   {
+    "object": "Coral King",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 1237
+   },
+   {
+    "object": "Coral King",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 660
+   }
+  ]
+ },
+ {
+  "flag": "defeatedCrowCourt",
+  "scene": "Room_CrowCourt_02",
+  "gate": "top1",
+  "boss": "Crawfather",
+  "start": {
+   "kind": "battleScene",
+   "object": "Battle Scene"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Battle Scene"
+  },
+  "needs": {},
+  "hp": 1300,
+  "phases": [
+   {
+    "object": "Crawfather",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 780
+   }
+  ]
+ },
+ {
+  "flag": "defeatedDockForemen",
+  "scene": "Dock_09",
+  "gate": "left1",
+  "boss": "Dock Guard Slasher|Dock Guard Thrower",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "Battle Ready",
+   "event": "ENTER|MINION DAMAGED"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Battle Start Range"
+  },
+  "needs": {},
+  "onward": [
+   {"object": "Boss Scene/Gates/Battle Gate (2)", "from": ["left1"]}
+  ],
+  "hp": 720,
+  "bodyHp": {
+   "Dock Guard Thrower": 520
+  },
+  "phases": [
+   {
+    "object": "Dock Guard Slasher",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 647
+   },
+   {
+    "object": "Dock Guard Slasher",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 503
+   },
+   {
+    "object": "Dock Guard Slasher",
+    "fsm": "Control",
+    "var": "P4 HP",
+    "value": 360
+   }
+  ]
+ },
+ {
+  "flag": "defeatedFlowerQueen",
+  "scene": "Shellwood_11b_Memory",
+  "gate": "door_wakeInMemory",
+  "boss": "Flower Queen Boss",
+  "start": {
+   "kind": "fsm",
+   "object": "Flower Queen Boss",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "START"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 1250,
+  "phases": [
+   {
+    "object": "Flower Queen Boss",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 874
+   }
+  ]
+ },
+ {
+  "flag": "defeatedGreyWarrior",
+  "scene": "Coral_39",
+  "gate": "right1",
+  "boss": "Coral Warrior Grey",
+  "start": {
+   "kind": "fsm",
+   "object": "Coral Warrior Grey",
+   "fsm": "Control",
+   "state": "Sleep",
+   "event": "WAKE"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 900,
+  "phases": []
+ },
+ {
+  "flag": "defeatedGuardBoneEast25",
+  "scene": "Bone_East_25",
+  "gate": "left1",
+  "boss": "Bone Hunter Throw",
+  "start": {
+   "kind": "fsm",
+   "object": "Bone Hunter Throw",
+   "fsm": "Control",
+   "state": "Rest",
+   "event": "WAKE|WAKE GUARD|TOOK DAMAGE"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 150,
+  "phases": []
+ },
+ {
+  "flag": "defeatedLace1",
+  "scene": "Bone_East_12",
+  "gate": "bot1",
+  "boss": "Lace Boss1",
+  "start": {
+   "kind": "fsm",
+   "object": "Lace Boss1",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {
+   "visitedCitadel": false,
+   "laceLeftDocks": false,
+   "encounteredLace1Grotto": false
+  },
+  "onward": [
+   {"object": "Boss Scene/Battle Gates/Battle Gate Left", "from": ["bot1"]}
+  ],
+  "hp": 250,
+  "phases": [
+   {
+    "object": "Lace Boss1",
+    "fsm": "Control",
+    "var": "Rage HP",
+    "value": 125
+   }
+  ]
+ },
+ {
+  "flag": "defeatedLaceTower",
+  "scene": "Song_Tower_01",
+  "gate": "right1",
+  "boss": "Lace Boss2 New",
+  "start": {
+   "kind": "fsm",
+   "object": "Lace Boss2 New",
+   "fsm": "Control",
+   "state": "Start Battle Wait",
+   "event": "BATTLE START FIRST|BATTLE START REFIGHT"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 800,
+  "phases": [
+   {
+    "object": "Lace Boss2 New",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 320
+   },
+   {
+    "object": "Lace Boss2 New",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 600
+   }
+  ]
+ },
+ {
+  "flag": "defeatedLastJudge",
+  "scene": "Coral_Judge_Arena",
+  "gate": "right1",
+  "boss": "Last Judge",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "Out of Range|Encountered",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Needolin Range|Refight Range"
+  },
+  "needs": {},
+  "onward": [
+   {"object": "Boss Scene/Gate L", "from": ["right1"]}
+  ],
+  "hp": 720,
+  "phases": [
+   {
+    "object": "Last Judge",
+    "fsm": "Control",
+    "var": "HP P2",
+    "value": 540
+   },
+   {
+    "object": "Last Judge",
+    "fsm": "Control",
+    "var": "HP P3",
+    "value": 216
+   }
+  ],
+  "follow": {
+   "state": "Intro Flare",
+   "from": "In Range",
+   "echo": "NPCs Start Singing>NPCs Singing Wait|Needolin End|Needolin End 2|NPC Start React"
+  }
+ },
+ {
+  "flag": "defeatedMossMother",
+  "scene": "Tut_03",
+  "gate": "right1",
+  "boss": "Mossbone Mother",
+  "start": {
+   "kind": "battleScene",
+   "object": "Battle Scene"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Battle Scene"
+  },
+  "needs": {},
+  "onward": [
+   {"object": "Battle Scene/Gates/Battle Gate Mossbone (1)", "from": ["right1"]}
+  ],
+  "hp": 120,
+  "phases": [
+   {
+    "object": "Mossbone Mother",
+    "fsm": "Control",
+    "var": "HP P2",
+    "value": 113
+   },
+   {
+    "object": "Mossbone Mother",
+    "fsm": "Control",
+    "var": "HP Half",
+    "value": 83
+   },
+   {
+    "object": "Mossbone Mother",
+    "fsm": "Control",
+    "var": "HP Call Buddy",
+    "value": 102
+   }
+  ]
+ },
+ {
+  "flag": "defeatedPhantom",
+  "scene": "Organ_01",
+  "gate": "left2",
+  "boss": "Phantom",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "Init",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "onward": [
+   {"object": "Boss Scene/Gates/Battle Gate", "from": ["left1", "left2"]}
+  ],
+  "hp": 650,
+  "phases": [
+   {
+    "object": "Phantom",
+    "fsm": "Control",
+    "var": "Dragoon HP",
+    "value": 454
+   },
+   {
+    "object": "Phantom",
+    "fsm": "Control",
+    "var": "Rage HP",
+    "value": 227
+   }
+  ]
+ },
+ {
+  "flag": "defeatedRoachkeeperChef",
+  "scene": "Dust_Chef",
+  "gate": "left1",
+  "boss": "Roachkeeper Chef (1)",
+  "start": {
+   "kind": "battleScene",
+   "object": "Battle Scene"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Battle Scene"
+  },
+  "needs": {},
+  "hp": 600,
+  "phases": [
+   {
+    "object": "Roachkeeper Chef (1)",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 0
+   }
+  ]
+ },
+ {
+  "flag": "defeatedSeth",
+  "scene": "Shellwood_22",
+  "gate": "right1",
+  "boss": "Seth",
+  "start": {
+   "kind": "fsm",
+   "object": "Seth",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "REFIGHT|ENTER|WAKE"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Meet Range|Battle Range"
+  },
+  "needs": {},
+  "hp": 1185,
+  "phases": [
+   {
+    "object": "Seth",
+    "fsm": "Phase Control",
+    "var": "P2 HP",
+    "value": 888
+   },
+   {
+    "object": "Seth",
+    "fsm": "Phase Control",
+    "var": "P3 HP",
+    "value": 474
+   }
+  ]
+ },
+ {
+  "flag": "defeatedSongChevalierBoss",
+  "scene": "Hang_07",
+  "gate": "right1",
+  "boss": "Song Knight",
+  "start": {
+   "kind": "fsm",
+   "object": "Song Knight",
+   "fsm": "Control",
+   "state": "Sleeping|Enc Dormant",
+   "event": "INTERACT|WAKE"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {},
+  "hp": 800,
+  "phases": [
+   {
+    "object": "Song Knight",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 0
+   }
+  ]
+ },
+ {
+  "flag": "defeatedSongGolem",
+  "scene": "Bone_East_08",
+  "gate": "left1",
+  "boss": "SG_head",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "Meet Ready|Remeet Ready",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Start Range"
+  },
+  "needs": {
+   "hasBrolly": true
+  },
+  "bossScene": "Bone_East_08_boss_golem",
+  "hp": 500,
+  "phases": [
+   {
+    "object": "SG_head",
+    "fsm": "Phase Control",
+    "state": "HP Check 1",
+    "action": "CompareHP",
+    "field": "integer2",
+    "value": 451
+   },
+   {
+    "object": "SG_head",
+    "fsm": "Phase Control",
+    "state": "HP Check 2",
+    "action": "CompareHP",
+    "field": "integer2",
+    "value": 326
+   },
+   {
+    "object": "SG_head",
+    "fsm": "Phase Control",
+    "state": "HP Check 3",
+    "action": "CompareHP",
+    "field": "integer2",
+    "value": 201
+   }
+  ]
+ },
+ {
+  "flag": "defeatedSplinterQueen",
+  "scene": "Shellwood_18",
+  "gate": "left1",
+  "boss": "Splinter Queen",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Battle Control",
+   "state": "Idle|Start Tension",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Battle Start Range"
+  },
+  "needs": {},
+  "hp": 310,
+  "phases": [
+   {
+    "object": "Splinter Queen",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 248
+   },
+   {
+    "object": "Splinter Queen",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 124
+   }
+  ]
+ },
+ {
+  "flag": "DefeatedSwampShaman",
+  "scene": "Shadow_18",
+  "gate": "left1",
+  "boss": "Swamp Shaman",
+  "start": {
+   "kind": "battleScene",
+   "object": "Battle Scene"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Battle Scene"
+  },
+  "needs": {},
+  "hp": 650,
+  "phases": [
+   {
+    "object": "Swamp Shaman",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 390
+   }
+  ]
+ },
+ {
+  "flag": "defeatedTormentedTrobbio",
+  "scene": "Library_13",
+  "gate": "left1",
+  "boss": "Tormented Trobbio",
+  "start": {
+   "kind": "fsm",
+   "object": "Tormented Trobbio",
+   "fsm": "Control",
+   "state": "Wait",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Start Range Meet"
+  },
+  "needs": {
+   "blackThreadWorld": true
+  },
+  "hp": 950,
+  "phases": [
+   {
+    "object": "Tormented Trobbio",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 475
+   },
+   {
+    "object": "Tormented Trobbio",
+    "fsm": "Control",
+    "var": "CrossFlash HP",
+    "value": 902
+   }
+  ]
+ },
+ {
+  "flag": "defeatedTrobbio",
+  "scene": "Library_13",
+  "gate": "left1",
+  "boss": "Trobbio",
+  "start": {
+   "kind": "fsm",
+   "object": "Trobbio",
+   "fsm": "Control",
+   "state": "Wait",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Start Range Meet"
+  },
+  "needs": {},
+  "hp": 700,
+  "phases": [
+   {
+    "object": "Trobbio",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 350
+   }
+  ]
+ },
+ {
+  "flag": "defeatedVampireGnatBoss",
+  "scene": "Greymoor_08",
+  "gate": "right2",
+  "boss": "Vampire Gnat",
+  "start": {
+   "kind": "fsm",
+   "object": "Vampire Gnat Scene",
+   "fsm": "Control",
+   "state": "Idle",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Fight Start Range"
+  },
+  "needs": {
+   "visitedBellhart": false
+  },
+  "hp": 600,
+  "phases": [
+   {
+    "object": "Vampire Gnat",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 389
+   }
+  ]
+ },
+ {
+  "flag": "defeatedWhiteCloverstag",
+  "scene": "Clover_19",
+  "gate": "left1",
+  "boss": "Cloverstag White Boss",
+  "start": {
+   "kind": "fsm",
+   "object": "Cloverstag White Boss",
+   "fsm": "Control",
+   "state": "Rest",
+   "event": "WAKE"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Start Range"
+  },
+  "needs": {},
+  "hp": 480,
+  "phases": [
+   {
+    "object": "Cloverstag White Boss",
+    "fsm": "Cast Timer",
+    "var": "P2 HP",
+    "value": 215
+   },
+   {
+    "object": "Cloverstag White Boss",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 215
+   }
+  ]
+ },
+ {
+  "flag": "defeatedWispPyreEffigy",
+  "scene": "Belltown_08",
+  "gate": "right1",
+  "boss": "Wisp Pyre Effigy",
+  "start": {
+   "kind": "fsm",
+   "object": "Wisp Pyre Effigy",
+   "fsm": "Summon Control",
+   "state": "Set HP|Dormant",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Gate Range"
+  },
+  "needs": {},
+  "hp": 400,
+  "phases": []
+ },
+ {
+  "flag": "defeatedZapCoreEnemy",
+  "scene": "Coral_29",
+  "gate": "left1",
+  "boss": "Zap Core Enemy",
+  "start": {
+   "kind": "fsm",
+   "object": "Zap Core Enemy",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "ALERT"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Zap Core Enemy/Alert Range"
+  },
+  "needs": {},
+  "hp": 550,
+  "phases": [
+   {
+    "object": "Zap Core Enemy",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 494
+   },
+   {
+    "object": "Zap Core Enemy",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 275
+   }
+  ]
+ },
+ {
+  "flag": "spinnerDefeated",
+  "scene": "Belltown_Shrine",
+  "gate": "right1",
+  "boss": "Spinner Boss",
+  "start": {
+   "kind": "fsm",
+   "object": "Spinner Boss",
+   "fsm": "Control",
+   "state": "Dormant",
+   "event": "BATTLE START"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "end": {
+   "object": "Black Thread States Thread Only Variant/Normal World/Boss Scene",
+   "fsm": "Control",
+   "state": "Set Sequence Completed",
+   "from": "Unencountered|State 2|Encountered|State 1|Spinner Look|Speak Pause|Speak Ready|Spinner Tele Out|Spinner Away|Battle Start|Defeat|Defeated"
+  },
+  "release": true,
+  "needs": {},
+  "hp": 360,
+  "phases": [
+   {
+    "object": "Spinner Boss",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 250
+   },
+   {
+    "object": "Spinner Boss",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 150
+   },
+   {
+    "object": "Spinner Boss",
+    "fsm": "Fake Death",
+    "var": "P3 HP",
+    "value": 150
+   }
+  ]
+ },
+ {
+  "flag": "skullKingDefeated",
+  "scene": "Bone_15",
+  "gate": "left1",
+  "boss": "Skull King",
+  "start": {
+   "kind": "fsm",
+   "object": "Skull King",
+   "fsm": "Behaviour",
+   "state": "State Check",
+   "event": "WAKE"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Wake Range"
+  },
+  "needs": {},
+  "hp": 450,
+  "phases": []
+ },
+ {
+  "flag": "skullKingDefeatedBlackThreaded",
+  "scene": "Bone_15",
+  "gate": "left1",
+  "boss": "Skull King",
+  "start": {
+   "kind": "fsm",
+   "object": "Skull King",
+   "fsm": "Behaviour",
+   "state": "State Check",
+   "event": "WAKE"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Wake Range"
+  },
+  "needs": {
+   "blackThreadWorld": true
+  },
+  "hp": 450,
+  "phases": []
+ },
+ {
+  "flag": "wardBossDefeated",
+  "scene": "Ward_02",
+  "gate": "right1",
+  "boss": "Conductor Boss",
+  "start": {
+   "kind": "fsm",
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "Idle",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Start Range"
+  },
+  "needs": {
+   "collectedWardBossKey": true
+  },
+  "hp": 1000,
+  "phases": [
+   {
+    "object": "Conductor Boss",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 800
+   },
+   {
+    "object": "Conductor Boss",
+    "fsm": "Control",
+    "var": "P3 HP",
+    "value": 400
+   },
+   {
+    "object": "Conductor Boss",
+    "fsm": "Custom Stun Control",
+    "var": "P2 HP",
+    "value": 750
+   },
+   {
+    "object": "Conductor Boss",
+    "fsm": "Custom Stun Control",
+    "var": "P3 HP",
+    "value": 400
+   }
+  ]
+ },
+ {
+  "flag": "garmondBlackThreadDefeated",
+  "scene": "Coral_33",
+  "gate": "right1",
+  "boss": "Garmond Black Threaded Fighter",
+  "start": {
+   "kind": "fsm",
+   "object": "Garmond Black Threaded Fighter",
+   "fsm": "Control",
+   "state": "Out of Start Range",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Can Start Range"
+  },
+  "needs": {
+   "blackThreadWorld": true
+  },
+  "hp": 900,
+  "phases": []
+ },
+ {
+  "flag": "skullKingKilled",
+  "scene": "Bonetown",
+  "gate": "left1",
+  "boss": "Skull King",
+  "start": {
+   "kind": "fsm",
+   "object": "Skull King",
+   "fsm": "Behaviour",
+   "state": "Invade Ready",
+   "event": "BENCHREST"
+  },
+  "area": {
+   "kind": "room"
+  },
+  "needs": {
+   "skullKingWillInvade": true
+  },
+  "hp": 450,
+  "phases": []
+ },
+ {
+  "flag": "defeatedVampireGnatBoss",
+  "scene": "Greymoor_05",
+  "gate": "left1",
+  "boss": "Vampire Gnat",
+  "start": {
+   "kind": "fsm",
+   "object": "Vampire Gnat Boss Scene",
+   "fsm": "Control",
+   "state": "Idle",
+   "event": "ENTER"
+  },
+  "area": {
+   "kind": "trigger",
+   "object": "Fight Start Range"
+  },
+  "needs": {
+   "allowVampireGnatInAltLoc": true,
+   "visitedBellhart": true,
+   "visitedCitadel": true
+  },
+  "hp": 600,
+  "phases": [
+   {
+    "object": "Vampire Gnat",
+    "fsm": "Control",
+    "var": "P2 HP",
+    "value": 389
+   }
+  ]
+ }
+]
