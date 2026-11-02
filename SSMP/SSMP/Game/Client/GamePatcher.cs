@@ -821,8 +821,9 @@ internal partial class GamePatcher {
     private void HealthManagerOnTakeDamageOnlyLanded(
         Action<HealthManager, HitInstance> orig, HealthManager self, HitInstance hitInstance
     ) {
+        // (coop) and, B's mirror, in a game that follows the scene host, on its copy of the enemy
         if (OnlyLandedHits() && hitInstance.Source != null && SwingOf(hitInstance.Source) != null &&
-            HealthManagerComponent.HostsHits(self)) {
+            HealthManagerComponent.ShowsLandedHits(self)) {
             return;
         }
 

@@ -545,6 +545,22 @@ internal class Entity {
         var hostDamageHeroes = Object.Host.GetComponentsInChildren<DamageHero>(true);
         var clientDamageHeroes = Object.Client.GetComponentsInChildren<DamageHero>(true);
         if (hostDamageHeroes.Length > 0 && clientDamageHeroes.Length > 0) {
+            // (coop) the clone's paired with the original's by their path under each (DamagePairs), one it lacks left
+            // out, so the scene host's damage and on/off reach the right box of the clone
+            if (DamagePairs.ByPath()) {
+                var clone = clientDamageHeroes;
+                var originalPaths = System.Array.ConvertAll(hostDamageHeroes,
+                    d => PathUnder(Object.Host.transform, d.transform));
+                var clonePaths = System.Array.ConvertAll(clone, d => PathUnder(Object.Client.transform, d.transform));
+                var pairs = DamagePairs.Align(originalPaths, clonePaths);
+                clientDamageHeroes = System.Array.ConvertAll(pairs, i => i < 0 ? null! : clone[i]);
+                if (DamagePairs.Logs) {
+                    foreach (var line in DamagePairs.Unmatched(originalPaths, clonePaths, pairs)) {
+                        Logger.Info($"(coop) hurt boxes of {Object.Host.name}: {line}");
+                    }
+                }
+            }
+
             //Logger.Info($"Adding DamageHero component to entity: {Object.Host.name}");
 
             _components[EntityComponentType.DamageHero] = new DamageHeroComponent(
@@ -621,6 +637,16 @@ internal class Entity {
         }
 
         //Logger.Debug(addedComponentsString);
+    }
+
+    /// <summary>(coop) A transform's path under root ("" for root itself).</summary>
+    private static string PathUnder(Transform root, Transform transform) {
+        var path = "";
+        for (var t = transform; t != null && t != root; t = t.parent) {
+            path = path.Length == 0 ? t.name : $"{t.name}/{path}";
+        }
+
+        return path;
     }
 
     /// <summary>

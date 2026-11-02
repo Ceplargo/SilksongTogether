@@ -1211,8 +1211,8 @@ internal class SaveManager {
                 }
                 default: {
                     if (decodedObject.GetType().IsEnum) {
-                        _lastPlayerData?.SetVariable(name, decodedObject);
-                        pd.SetVariable(name, decodedObject);
+                        SetEnum(_lastPlayerData, name, decodedObject);
+                        SetEnum(pd, name, decodedObject);
                     } else {
                         throw new ArgumentException($"Could not decode type: {decodedObject.GetType()}");
                     }
@@ -1354,6 +1354,17 @@ internal class SaveManager {
         };
 
         return EncodeUtil.EncodeSaveDataValue(casted, name);
+    }
+
+    /// <summary>
+    /// A received enum (the caravan's stop, the Bell Beast's station) set on its player data field. PlayerData's
+    /// generic SetVariable took it as an object, and its field lookup wants the field's own type: no shared enum landed.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin (enum_sync) switches it off with a patch
+    private static void SetEnum(PlayerData? data, string name, object value) {
+        if (data != null) {
+            typeof(PlayerData).GetField(name)?.SetValue(data, value);
+        }
     }
 
     /// <summary>

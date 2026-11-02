@@ -13,10 +13,15 @@ namespace BossRule;
 /// </summary>
 internal sealed class CutsceneRun {
     private readonly IReadOnlyCollection<string> _starts;
+    private readonly IReadOnlyCollection<string> _skip;
     private readonly HashSet<string> _entered = new();
     private ushort _seen;
 
-    public CutsceneRun(IEnumerable<string> starts) => _starts = starts.ToList();
+    /// <param name="skip">States never followed (a crest's To Memory: it branches away only in its own update).</param>
+    public CutsceneRun(IEnumerable<string> starts, IEnumerable<string>? skip = null) {
+        _starts = starts.ToList();
+        _skip = (skip ?? Enumerable.Empty<string>()).ToList();
+    }
 
     public bool Started { get; private set; }
 
@@ -50,6 +55,6 @@ internal sealed class CutsceneRun {
     public bool Follows(ushort seq, string state, string current) {
         if (seq <= _seen) return false;
         _seen = seq;
-        return !Leads && state != current && (Started ? !_entered.Contains(state) : _starts.Contains(state));
+        return !_skip.Contains(state) && !Leads && state != current && (Started ? !_entered.Contains(state) : _starts.Contains(state));
     }
 }

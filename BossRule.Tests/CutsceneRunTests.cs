@@ -68,6 +68,16 @@ public class CutsceneRunTests {
         Assert.Equal(2, run.Sent);
     }
 
+    // a crest's To Memory branches away (Load Memory Scene false cancels it) only in its FSM's own update: set by a
+    // follow, it ran on into its room change to a memory this game lacks (Memory_Beast) and the hero hung between rooms
+    [Fact]
+    public void A_state_its_row_skips_is_never_followed() {
+        var run = new CutsceneRun(new[] { "Jump Up" }, new[] { "To Memory" });
+        run.Entered("Jump Up", followed: true);
+        Assert.False(run.Follows(9, "To Memory", "Cancel Rumble"));
+        Assert.True(run.Follows(10, "Take Control", "Cancel Rumble"));
+    }
+
     // a lost state's resend can come in after a newer one: it never moves the follower back (the shrine's End after its
     // Set Finished would have run the end twice)
     [Fact]

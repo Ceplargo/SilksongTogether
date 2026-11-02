@@ -23,6 +23,11 @@ internal class MonoBehaviourUtil : MonoBehaviour {
     /// </summary>
     public event Action? OnLateUpdateEvent;
 
+    /// <summary>
+    /// (coop) Event that is executed each physics step (a long frame runs several before that frame's updates).
+    /// </summary>
+    public event Action? OnFixedUpdateEvent;
+
     public void Awake() {
         if (Instance != null) {
             Destroy(this);
@@ -40,6 +45,20 @@ internal class MonoBehaviourUtil : MonoBehaviour {
         // Each handler on its own: a handler that throws would otherwise skip every handler after it that frame, and
         // entity sync shares this event with save sync (a save item that threw every frame froze enemy movement)
         foreach (var handler in OnUpdateEvent.GetInvocationList()) {
+            try {
+                ((Action) handler)();
+            } catch (Exception e) {
+                Debug.LogException(e);
+            }
+        }
+    }
+
+    public void FixedUpdate() {
+        if (OnFixedUpdateEvent == null) {
+            return;
+        }
+
+        foreach (var handler in OnFixedUpdateEvent.GetInvocationList()) {
             try {
                 ((Action) handler)();
             } catch (Exception e) {

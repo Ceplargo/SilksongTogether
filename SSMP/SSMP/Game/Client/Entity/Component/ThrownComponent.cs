@@ -136,6 +136,13 @@ internal class ThrownComponent : EntityComponent {
         public Vector2 Velocity;
         public float Time;
 
+        /// <summary>(coop) The move between the last two sends, against which a new one turns back (SentSpeed).</summary>
+        public Vector2 Move;
+
+        /// <summary>(coop) A boss's own object it carries (not let go of: the Last Judge's Censer Slam): no speed is sent
+        /// for it (SentSpeed).</summary>
+        public bool Carried;
+
         /// <summary>
         /// (coop) The entity's FSM, state and action that spawned it (NoState for a stage object), sent with it so a
         /// game that comes into the room later spawns its own copy from the same action.
@@ -265,6 +272,20 @@ internal class ThrownComponent : EntityComponent {
     /// </summary>
     private readonly HashSet<byte> _rested = [];
 
+    /// <summary>
+    /// (coop) Other games: each copy's body given the scene host's speed, with the game time it was placed then; a
+    /// physics step <see cref="RunOn.Limit"/> past that stops it (<see cref="OnFixedUpdate"/>).
+    /// </summary>
+    private readonly Dictionary<Rigidbody2D, float> _carried = new();
+
+    private readonly List<Rigidbody2D> _stopped = [];
+
+    /// <summary>
+    /// (coop) Other games: the game time of the latest placement (<see cref="OnLateUpdate"/>); a carried body placed
+    /// before it is no longer placed and goes on by itself.
+    /// </summary>
+    private float _lastPlacing;
+
     private byte _lastNumber;
     private float _lastSend;
 
@@ -288,6 +309,7 @@ internal class ThrownComponent : EntityComponent {
     ) : base(netClient, entityId, gameObject) {
         _netClient = netClient;
         MonoBehaviourUtil.Instance.OnLateUpdateEvent += OnLateUpdate;
+        MonoBehaviourUtil.Instance.OnFixedUpdateEvent += OnFixedUpdate;
 
         var original = gameObject.Host;
         var number = FirstStageNumber;
@@ -597,7 +619,9 @@ internal class ThrownComponent : EntityComponent {
         foreach (var (number, (gameObject, _, rest)) in _stage) {
             var isOut = gameObject != null && gameObject.activeInHierarchy && !Resting(gameObject, rest);
             if (isOut && !_stageFollowed.ContainsKey(number)) {
-                _stageFollowed[number] = new Followed(gameObject!);
+                _stageFollowed[number] = new Followed(gameObject!) {
+                    Carried = _copySide.TryGetValue(number, out var own) && !own.LetGo && !own.Waits
+                };
             } else if (!isOut) {
                 _stageFollowed.Remove(number);
             }
@@ -674,10 +698,13 @@ internal class ThrownComponent : EntityComponent {
         Vector2 position = followed.GameObject.transform.position;
         var elapsed = now - followed.Time;
         // An object moved by its rigidbody reports its velocity; one moved by its FSM or animation, the speed it went
-        // at since the last send
+        // at since the last send, (coop) only when that move goes on the way the one before went (SentSpeed)
+        var move = position - followed.Position;
+        var (speedX, speedY) = SentSpeed.Of(followed.Move.x, followed.Move.y, move.x, move.y, elapsed, followed.Carried);
         var velocity = followed.GameObject.TryGetComponent<Rigidbody2D>(out var body) && body.linearVelocity != Vector2.zero
             ? body.linearVelocity
-            : elapsed > 0 ? (position - followed.Position) / elapsed : Vector2.zero;
+            : new Vector2(speedX, speedY);
+        followed.Move = move;
         followed.Position = position;
         followed.Velocity = velocity;
         followed.Time = now;
@@ -726,6 +753,7 @@ internal class ThrownComponent : EntityComponent {
             return;
         }
 
+        _lastPlacing = Time.time;
         StageFollow();
         if (_copies.Count == 0) {
             return;
@@ -762,6 +790,7 @@ internal class ThrownComponent : EntityComponent {
             FollowsTurn(transform, target.Angle);
             if (copy.GameObject.TryGetComponent<Rigidbody2D>(out var body)) {
                 body.linearVelocity = target.Velocity;
+                _carried[body] = Time.time;
             }
         }
 
@@ -770,6 +799,34 @@ internal class ThrownComponent : EntityComponent {
         }
 
         _ended.Clear();
+    }
+
+    /// <summary>
+    /// (coop) Other games, each physics step: a copy whose body has carried it <see cref="RunOn.Limit"/> past its last
+    /// placement stops where it is until the next placement (a long frame runs all its physics steps first). One the
+    /// latest placement left out is forgotten as it is (<see cref="RunOn.Forgets"/>). A game that is no longer a room's
+    /// client forgets them all: its copies are its own objects then.
+    /// </summary>
+    private void OnFixedUpdate() {
+        if (!IsControlled) {
+            _carried.Clear();
+            return;
+        }
+
+        foreach (var (body, placedAt) in _carried) {
+            if (body == null || RunOn.Forgets(placedAt, _lastPlacing)) {
+                _stopped.Add(body!);
+            } else if (RunOn.Stops(Time.fixedTime, placedAt)) {
+                body.linearVelocity = Vector2.zero;
+                _stopped.Add(body);
+            }
+        }
+
+        foreach (var body in _stopped) {
+            _carried.Remove(body);
+        }
+
+        _stopped.Clear();
     }
 
     /// <summary>
@@ -863,6 +920,7 @@ internal class ThrownComponent : EntityComponent {
             // (coop) its body moves on as the host's between frames: a bell's own bounce moved its collider off
             if (!caught && gameObject.TryGetComponent<Rigidbody2D>(out var body)) {
                 body.linearVelocity = target.Velocity;
+                _carried[body] = Time.time;
             }
 
             FollowsParts(copy, target.Parts);
@@ -1238,5 +1296,6 @@ internal class ThrownComponent : EntityComponent {
     /// <inheritdoc />
     public override void Destroy() {
         MonoBehaviourUtil.Instance.OnLateUpdateEvent -= OnLateUpdate;
+        MonoBehaviourUtil.Instance.OnFixedUpdateEvent -= OnFixedUpdate;
     }
 }

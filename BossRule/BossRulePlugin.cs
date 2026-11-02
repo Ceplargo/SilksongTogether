@@ -19,7 +19,7 @@ public class BossRulePlugin : BaseUnityPlugin {
     /// server refuses a friend whose version differs, since synced values travel as positions in a list built into
     /// the mod.
     /// </summary>
-    internal const string Version = "0.3.15";
+    internal const string Version = "0.3.16";
 
     private BossRuleClientAddon? _client;
 
@@ -42,6 +42,9 @@ public class BossRulePlugin : BaseUnityPlugin {
         harmony.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.Trigger2dEvent),
                 nameof(HutongGames.PlayMaker.Actions.Trigger2dEvent.DoTriggerStay2D)),
             prefix: new HarmonyMethod(typeof(GroundBells), nameof(GroundBells.TriggerStayPrefix)));
+        harmony.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.SendEventByName),
+                nameof(HutongGames.PlayMaker.Actions.SendEventByName.OnEnter)),
+            postfix: new HarmonyMethod(typeof(MultiHits), nameof(MultiHits.SentPostfix)));
         harmony.Patch(AccessTools.Method(typeof(BellShrineGateLock), nameof(BellShrineGateLock.StartedPlaying)),
             postfix: new HarmonyMethod(typeof(DoorBells), nameof(DoorBells.StartedPostfix)));
         harmony.Patch(AccessTools.Method(typeof(BellShrineGateLock), nameof(BellShrineGateLock.StoppedPlaying)),

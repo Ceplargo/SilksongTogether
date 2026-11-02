@@ -50,6 +50,7 @@
     ],
     "object": "Churchkeeper Intro Scene",
     "fsm": "Control",
+    "release": "End",
     "start": [
       "Wait for Hero Grounded"
     ],
@@ -60,10 +61,12 @@
     "how": "touch",
     "probe": {
       "at": "Churchkeeper Intro Scene",
-      "length_s": 70
+      "length_s": 70,
+      "presses": {
+        "Set End": "advance"
+      }
     },
-    "note": "Bone Bottom's first entry: a trigger (WOUND) has the Churchkeeper hail Hornet, who collapses (Bonetown's Weakness Scene, its PD Bool churchKeeperIntro), wakes and talks; Set End sets churchKeeperIntro, completedTutorial and defeatedMossMother.",
-    "follow": false
+    "note": "Bone Bottom's first entry: a trigger (WOUND) has the Churchkeeper hail Hornet, who collapses (Bonetown's Weakness Scene, its PD Bool churchKeeperIntro), wakes and talks; Set End sets churchKeeperIntro, completedTutorial and defeatedMossMother."
   },
   {
     "name": "bellhart_arrival",
@@ -118,18 +121,19 @@
     "object": "Greymoor Entry/crashExit",
     "fsm": "Control",
     "start": [
-      "State 2"
+      "State 2",
+      "State 3"
     ],
     "values": [
-      "crashingIntoGreymoor"
+      "crashingIntoGreymoor",
+      "crashedIntoGreymoor"
     ],
     "how": "touch",
     "note": "A trigger (Trigger2dEvent) takes control and sends the hero through the floor to Greymoor_01.",
     "probe": {
       "at": "crashExit",
       "length_s": 15
-    },
-    "follow": false
+    }
   },
   {
     "name": "judge_gate",
@@ -452,6 +456,7 @@
     ],
     "object": "Ability Scene/Shrine Weaver Ability",
     "fsm": "Inspection",
+    "release": "Set Finished",
     "start": [
       "Look Back"
     ],
@@ -464,9 +469,9 @@
         "Bind Ready": "BIND",
         "Bind Prompt": "BIND"
       },
-      "length_s": 50
-    },
-    "follow": false
+      "length_s": 50,
+      "walk_to": true
+    }
   },
   {
     "name": "shrine_cling_grip",
@@ -476,6 +481,7 @@
     ],
     "object": "Ability Scene (1)/Shrine Weaver Ability",
     "fsm": "Inspection",
+    "release": "Set Finished",
     "start": [
       "Look Back"
     ],
@@ -489,8 +495,7 @@
         "Bind Prompt": "BIND"
       },
       "length_s": 50
-    },
-    "follow": false
+    }
   },
   {
     "name": "crest_beast",
@@ -500,8 +505,13 @@
     ],
     "object": "Crest Get Shrine",
     "fsm": "Control",
+    "release": "End 2",
+    "cancel": "Cancel",
+    "skip": [
+      "To Memory"
+    ],
     "start": [
-      "Take Control"
+      "Jump Up"
     ],
     "values": [
       "completedMemory_beast"
@@ -513,11 +523,11 @@
     "note": "A bind at the crest's rune (ListenForCast) takes control and loads its memory scene (Memory_Beast), which gives the crest.",
     "probe": {
       "presses": {
-        "Can Bind": "BIND"
+        "Can Bind": "BIND",
+        "Rebind Ready": "BIND"
       },
-      "length_s": 60
-    },
-    "follow": false
+      "length_s": 120
+    }
   },
   {
     "name": "crest_wanderer",
@@ -527,8 +537,13 @@
     ],
     "object": "Group (1)/Crest Get Shrine",
     "fsm": "Control",
+    "release": "End 2",
+    "cancel": "Cancel",
+    "skip": [
+      "To Memory"
+    ],
     "start": [
-      "Take Control"
+      "Jump Up"
     ],
     "values": [
       "completedMemory_wanderer"
@@ -536,11 +551,11 @@
     "how": "bind",
     "probe": {
       "presses": {
-        "Can Bind": "BIND"
+        "Can Bind": "BIND",
+        "Rebind Ready": "BIND"
       },
-      "length_s": 60
-    },
-    "follow": false
+      "length_s": 120
+    }
   },
   {
     "name": "crest_reaper",
@@ -550,8 +565,13 @@
     ],
     "object": "Crest Get Shrine",
     "fsm": "Control",
+    "release": "End 2",
+    "cancel": "Cancel",
+    "skip": [
+      "To Memory"
+    ],
     "start": [
-      "Take Control"
+      "Jump Up"
     ],
     "values": [
       "completedMemory_reaper"
@@ -559,11 +579,11 @@
     "how": "bind",
     "probe": {
       "presses": {
-        "Can Bind": "BIND"
+        "Can Bind": "BIND",
+        "Rebind Ready": "BIND"
       },
-      "length_s": 60
-    },
-    "follow": false
+      "length_s": 120
+    }
   },
   {
     "name": "drifters_cloak",
@@ -573,18 +593,25 @@
     ],
     "object": "_NPCs/Seamstress",
     "fsm": "Dialogue",
+    "release": "Talk End 3",
     "start": [
-      "Fade Up"
+      "Fade Down"
     ],
     "values": [
       "hasBrolly"
     ],
     "how": "interact",
+    "needs": {
+      "MetSeamstress": true,
+      "quest:Brolly Get": true
+    },
     "note": "The Seamstress's talk ends in a video and the cloak (hasBrolly).",
     "probe": {
+      "presses": {
+        "Complete?": "advance"
+      },
       "length_s": 60
-    },
-    "follow": false
+    }
   },
   {
     "name": "charge_slash",
@@ -594,8 +621,10 @@
     ],
     "object": "Pinstress States/Ground Sitting/Pinstress Interior Ground Sit",
     "fsm": "Behaviour",
+    "release": "Down To Idle",
     "start": [
-      "Reposition"
+      "Reposition",
+      "Cinematic"
     ],
     "values": [
       "hasChargeSlash"
@@ -604,8 +633,7 @@
     "note": "The Pinstress's lesson: a video and the needle strike (hasChargeSlash).",
     "probe": {
       "length_s": 60
-    },
-    "follow": false
+    }
   },
   {
     "name": "needolin_memory",
@@ -643,6 +671,7 @@
     "name": "bellway_ride",
     "kind": "travel",
     "scenes": [
+      "Bone_05",
       "Bellway_01",
       "Bellway_02",
       "Bellway_03",
@@ -650,7 +679,6 @@
       "Bellway_08",
       "Bellway_Aqueduct",
       "Belltown_basement",
-      "Bone_05",
       "Shellwood_19"
     ],
     "object": "Bone Beast NPC",
@@ -659,19 +687,33 @@
       "Take Control"
     ],
     "values": [],
-    "how": "interact",
-    "note": "The bell rung, the Bell Beast comes, the rider picks a station and travels through the cinematic scene Cinematic_Stag_travel; at the station Hero Fling Out drops the hero.",
+    "needs": {
+      "defeatedBellBeast": true,
+      "UnlockedFastTravel": true
+    },
+    "how": "event",
+    "note": "The bell rung, the Bell Beast comes, the rider picks a station and travels through the cinematic scene Cinematic_Stag_travel; at the station Hero Fling Out drops the hero. A new game's beast is at no station: in Bone_05 (on there after its fight) its Wait For Call takes INTERACT (Hero Call), it comes, and INTERACT at Idle opens the map (Open map), where CoopQA travelto picks a station.",
+    "probe": {
+      "event": "INTERACT",
+      "direct": true,
+      "presses": {
+        "Outside Range": "once:to:Travel Interaction",
+        "Idle": "once:INTERACT",
+        "Open map": "once:travel:Docks"
+      },
+      "length_s": 60
+    },
     "follow": false
   },
   {
     "name": "caravan_ride",
     "kind": "travel",
     "scenes": [
-      "Greymoor_08",
       "Bone_10",
+      "Greymoor_08",
       "Coral_Judge_Arena"
     ],
-    "object": "Caravan",
+    "object": "Black Thread States Thread Only Variant/Normal World/Caravan",
     "fsm": "Quest End Sequence",
     "start": [
       "Fade Down"
@@ -679,8 +721,16 @@
     "values": [
       "CaravanTroupeLocation"
     ],
-    "how": "interact",
-    "note": "The flea caravan moves on with the hero inside (Room_Caravan_Interior_Travel).",
+    "needs": {
+      "CaravanTroupeLocation": "Bone"
+    },
+    "how": "event",
+    "note": "The flea caravan moves on with the hero inside (Room_Caravan_Interior_Travel). A new game's caravan is at Bone_10 (CaravanTroupeLocation Bone), first here. The troupe leader's travel yes sends QUEST END TRAVEL straight to its Quest End Sequence (SendEventByNameV2), so the probe sends it there.",
+    "probe": {
+      "event": "QUEST END TRAVEL",
+      "direct": true,
+      "length_s": 60
+    },
     "follow": false
   },
   {
@@ -695,8 +745,12 @@
       "Cinematic"
     ],
     "values": [],
-    "how": "interact",
-    "note": "A video in Hornet's Bellhart room; what starts it is unknown from the dump (no trigger in its FSM).",
+    "how": "event",
+    "note": "A video in Hornet's Bellhart room. The collection desk's yes to building the Farsight unlocks it and sends CONSTRUCT FARSIGHT through EventRegister (CollectionViewerDesk.OnStartDialogue); the probe sends that event, as what the desk needs for it is not read yet.",
+    "probe": {
+      "event": "CONSTRUCT FARSIGHT",
+      "length_s": 60
+    },
     "follow": false
   }
 ]

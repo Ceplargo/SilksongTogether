@@ -8548,7 +8548,7 @@
       "Kind": "Shared"
     },
     "permadeathMode": {
-      "Sync": true,
+      "Sync": false,
       "SyncType": "Server",
       "IgnoreSceneHost": true,
       "VarType": "System.Int32",

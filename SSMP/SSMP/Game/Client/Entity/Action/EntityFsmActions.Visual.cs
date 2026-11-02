@@ -676,9 +676,10 @@ internal static partial class EntityFsmActions {
                 yield return new WaitForSeconds(action.delay.Value);
             }
 
-            initial = gameObject.activeSelf;
-            gameObject.SetActive(action.activate.Value);
-            switched = true;
+            // (coop) the object may be gone by now (destroyed in the wait): then nothing switches
+            switched = DelayedSwitch.Run(gameObject, go => go != null, go => go.activeSelf, (go, on) => go.SetActive(on),
+                action.activate.Value, out var before);
+            if (switched) initial = before;
         }
     }
 

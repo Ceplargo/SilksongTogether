@@ -32,6 +32,10 @@
         <Compile Include="..\SSMP\Game\Client\Entity\Component\UpdateOrder.cs" Link="Linked\UpdateOrder.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\PartBits.cs" Link="Linked\PartBits.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\CatchPoint.cs" Link="Linked\CatchPoint.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Action\DelayedSwitch.cs" Link="Linked\DelayedSwitch.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\SentSpeed.cs" Link="Linked\SentSpeed.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\RunOn.cs" Link="Linked\RunOn.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\DamagePairs.cs" Link="Linked\DamagePairs.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\MissedHits.cs" Link="Linked\MissedHits.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\RemoteStuns.cs" Link="Linked\RemoteStuns.cs"/>
     </ItemGroup>

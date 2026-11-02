@@ -17,6 +17,8 @@
         <Compile Include="..\BossRule\CutsceneRun.cs" Link="CutsceneRun.cs"/>
         <Compile Include="..\BossRule\CutsceneCatalog.cs" Link="CutsceneCatalog.cs"/>
         <Compile Include="..\BossRule\RiseWatch.cs" Link="RiseWatch.cs"/>
+        <Compile Include="..\BossRule\EarlyRises.cs" Link="EarlyRises.cs"/>
+        <Compile Include="..\BossRule\MultiHitPath.cs" Link="MultiHitPath.cs"/>
     </ItemGroup>
 
     <ItemGroup>

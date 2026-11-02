@@ -52,7 +52,7 @@ internal sealed class CutsceneFollower {
             _scene = scene;
             if (scene == null) return;
             foreach (var entry in CutsceneCatalog.InRoom(_catalog, scene).Where(e => e.Follow)) {
-                _watched.Add(new Watched { Entry = entry, Run = new CutsceneRun(entry.Start) });
+                _watched.Add(new Watched { Entry = entry, Run = new CutsceneRun(entry.Start, entry.Skip) });
             }
         }
 
@@ -62,10 +62,18 @@ internal sealed class CutsceneFollower {
         foreach (var w in _watched.Where(w => w.Fsm == null)) {
             if (Find(w.Entry) is not { } fsm) continue;
             w.Fsm = fsm;
+            Debug.Log($"[BossRule] The cutscene {w.Entry.Name} is watched ({fsm.ActiveStateName}, its run " +
+                      $"{(w.Run.Started ? w.Run.Leads ? "leading" : "following" : "not started")})");
             w.Handler = state => {
                 if (w.Run.Entered(state.Name, _following)) _send(_scene!, w.Entry.Name, state.Name, w.Run.Sent);
                 // a following game, or one that does not run the room's boss (whose own start would give it back)
-                if (w.Run.Started && (!w.Run.Leads || !_runsBoss()) && state.Name == w.Entry.Release) Release(w.Entry);
+                // (a crest cancelled by a hit on its setter at the stab ends at Cancel, giving only the setter back)
+                var ends = state.Name == w.Entry.Release || state.Name == w.Entry.Cancel;
+                if (w.Run.Started && (!w.Run.Leads || !_runsBoss()) && ends) Release(w.Entry, state.Name);
+                // the cutscene is over: what its FSM does next (the Seamstress's next talk) is each game's own
+                if (w.Run.Started && ends && EndsAtRelease()) {
+                    w.Run = new CutsceneRun(w.Entry.Start, w.Entry.Skip);
+                }
             };
             fsm.Fsm.StateChanged += w.Handler;
         }
@@ -94,7 +102,21 @@ internal sealed class CutsceneFollower {
     public static void Follow(PlayMakerFSM fsm, CutsceneRun run, ushort seq, string state) {
         // an FSM off in this game (the opening's, once this game's values say it played) never runs on to its end, so its
         // follow would hold this game's hero for good
-        if (!fsm.isActiveAndEnabled || !run.Follows(seq, state, fsm.ActiveStateName)) return;
+        if (!fsm.isActiveAndEnabled) {
+            Debug.Log($"[BossRule] The cutscene {fsm.gameObject.name} ({fsm.FsmName}) is off: {state} not followed");
+            return;
+        }
+
+        // a crest reloads its room in each game, and the leader's can end its reload and tell Set Return while this
+        // one's is under way (seen under lag): an FSM is not set in the middle of its room change, and this game's
+        // own entry plays the rest
+        if (MidRoomChange()) {
+            Debug.Log($"[BossRule] The cutscene {fsm.gameObject.name} ({fsm.FsmName}) between rooms: " +
+                      $"{state} not followed");
+            return;
+        }
+
+        if (!run.Follows(seq, state, fsm.ActiveStateName)) return;
 
         var starting = !run.Started;
         _following = true;
@@ -102,6 +124,7 @@ internal sealed class CutsceneFollower {
             // the setter's own walk up to it (a shrine's interaction) took that hero's control before the start: this
             // game's hero stops with it; the cutscene's end gives both back (the shrine's Set Finished)
             if (starting && HeroController.SilentInstance is { } hero) hero.RelinquishControl();
+            CloseMessages();
             fsm.SetState(state);
         } finally {
             _following = false;
@@ -111,18 +134,52 @@ internal sealed class CutsceneFollower {
     }
 
     /// <summary>
+    /// The messages up in this game (a crest's, an item's, a skill's) closed as their end closes them: the setter's
+    /// game closed its own and went on. Left up, a crest's message was torn down by its room's reload before it ended,
+    /// and its pause of pickups, the inventory and the pause menu stayed (UIMsgProxy.SetIsInMsg(false) never ran).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
+    public static void CloseMessages() {
+        // a message's object is active only while it shows (UIMsgBase.DoMsg turns it off at its end)
+        foreach (var msg in UnityEngine.Object.FindObjectsByType<UIMsgProxy>(FindObjectsSortMode.None)) {
+            msg.StopAllCoroutines();
+            msg.SetIsInMsg(false);
+            msg.gameObject.SetActive(false);
+        }
+    }
+
+    /// <summary>
+    /// Whether a run ends at its release state. An NPC's cutscene FSM is the NPC's whole life (the Seamstress's
+    /// Dialogue): a run that went on told her next talk to the other games, which followed it, its lines on their
+    /// screens and their heroes held.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch (it then reads false)
+    public static bool EndsAtRelease() => true;
+
+    /// <summary>Whether this game's hero is between rooms: its room change has not ended.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch (it then reads false)
+    public static bool MidRoomChange() => HeroController.SilentInstance is { cState.transitioning: true };
+
+    /// <summary>
     /// This game's cutscene reached the entry's release state with its hero still held, where nothing in this game gives
     /// it back: the Widow's talk (End) leaves the hero to her roar, which runs only in the game that runs her; a shrine
     /// followed past its End (a late or lost state) reaches Set Finished held. The hero takes input again here, unless
     /// it is changing room, respawning or dead.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
-    public static void Release(CutsceneEntry entry) {
+    public static void Release(CutsceneEntry entry, string at) {
         if (HeroController.SilentInstance is not { acceptingInput: false } hero ||
-            hero.cState.transitioning || hero.cState.hazardRespawning || hero.cState.dead) return;
+            hero.cState.transitioning || hero.cState.hazardRespawning || hero.cState.dead) {
+            var h = HeroController.SilentInstance;
+            Debug.Log($"[BossRule] The cutscene {entry.Name} gives nothing back at {at}: " + (h == null
+                ? "no hero"
+                : $"accepting input {h.acceptingInput}, transitioning {h.cState.transitioning}, " +
+                  $"respawning {h.cState.hazardRespawning}, dead {h.cState.dead}, locks {h.HeroLockState}"));
+            return;
+        }
         hero.StartAnimationControl();
         hero.RegainControl();
-        Debug.Log($"[BossRule] The cutscene {entry.Name} gives the hero back at {entry.Release}");
+        Debug.Log($"[BossRule] The cutscene {entry.Name} gives the hero back at {at}");
     }
 
     /// <summary>The entry's FSM on the object at its path in this room, an active one first.</summary>

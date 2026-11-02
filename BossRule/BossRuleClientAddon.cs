@@ -56,14 +56,20 @@ internal class BossRuleClientAddon : ClientAddon {
             if ((OutcomeKind) packet.Kind == OutcomeKind.Won) _gate?.EndFollowed(packet.Scene);
         });
 
-        _follower = new ArenaFollower((scene, flag, state) =>
-            sender.SendSingleData(BossPacketId.ArenaFollow, new ArenaFollow { Scene = scene, Flag = flag, State = state }));
-        _roomEnd = new RoomEnd((scene, flag, state) =>
-            sender.SendSingleData(BossPacketId.ArenaFollow, new ArenaFollow { Scene = scene, Flag = flag, State = state }));
+        // print only (a gate's friend's ground bell up 0.69 s after the host's): each arena follow message with its
+        // time in both games, so a late one, or one a second in the same send replaced (single data), shows
+        void SendFollow(string scene, string flag, string state) {
+            Debug.Log($"[BossRule] ArenaFollow sent: {state} ({scene})");
+            var follow = new ArenaFollow { Scene = scene, Flag = flag, State = state };
+            sender.SendSingleData(BossPacketId.ArenaFollow, follow);
+        }
+
+        _follower = new ArenaFollower(SendFollow);
+        _roomEnd = new RoomEnd(SendFollow);
         DoorBells.Send = state => {
             var scene = GameManager.SilentInstance?.sceneName;
             if (_connected && _bosses.FirstOrDefault(e => e.Scene == scene) is { } room) {
-                sender.SendSingleData(BossPacketId.ArenaFollow, new ArenaFollow { Scene = room.Scene, Flag = room.Flag, State = state });
+                SendFollow(room.Scene, room.Flag, state);
             }
         };
         // A cutscene's states go as collection data, each one numbered: as single data a second state in one send
@@ -79,8 +85,21 @@ internal class BossRuleClientAddon : ClientAddon {
             s => _cutscenes?.Received(s.Scene, s.Name, s.State, s.Seq));
         GroundBells.Send = DoorBells.Send;
         GroundBells.NotSceneHost = () => _connected && !clientApi.ClientManager.IsSceneHost;
+        MultiHits.Send = DoorBells.Send;
+        MultiHits.NotSceneHost = GroundBells.NotSceneHost;
+        MultiHits.SceneHost = () => _connected && clientApi.ClientManager.IsSceneHost;
+        MultiHits.Username = () => clientApi.ClientManager.Username;
+        MultiHits.PlayerObject = name => clientApi.ClientManager.Players
+            .FirstOrDefault(p => p.Username == name && p.IsInLocalScene)?.PlayerObject;
         receiver.RegisterPacketHandler<ArenaFollow>(BossPacketId.ArenaFollow, packet => {
+            Debug.Log($"[BossRule] ArenaFollow received: {packet.State} ({packet.Scene})");
             if (GameManager.SilentInstance?.sceneName != packet.Scene) return;
+            // another player's hero was caught by a boss's multi-hitter there: the scene host's game sends its connect
+            if (packet.State.StartsWith(MultiHits.Prefix)) {
+                MultiHits.Received(packet.State.Substring(MultiHits.Prefix.Length));
+                return;
+            }
+
             // the scene host's ground bell holder rose: this game's rises too, if it follows the scene host
             if (packet.State.StartsWith(GroundBells.Prefix)) {
                 GroundBells.Echo(packet.State.Substring(GroundBells.Prefix.Length));
@@ -182,6 +201,7 @@ internal class BossRuleClientAddon : ClientAddon {
         if (_connected) _roomEnd!.Tick(_bosses, GameManager.SilentInstance?.sceneName);
         _spectate!.Tick();
         GroundBells.Tick();
+        MultiHits.Tick();
     }
 
     /// <summary>

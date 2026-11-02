@@ -12,7 +12,8 @@ namespace BossRule;
 /// how, probe, note) are the tests' and the list's.
 /// </summary>
 internal record CutsceneEntry(string Name, IReadOnlyList<string> Scenes, string Object, string Fsm,
-    IReadOnlyList<string> Start, bool Follow, string? Release = null);
+    IReadOnlyList<string> Start, bool Follow, string? Release = null, IReadOnlyList<string>? Skip = null,
+    string? Cancel = null);
 
 internal static class CutsceneCatalog {
     public static List<CutsceneEntry> Load(string json) =>
@@ -23,7 +24,9 @@ internal static class CutsceneCatalog {
             (string) e["fsm"]!,
             e["start"]!.Select(s => (string) s!).ToList(),
             (bool?) e["follow"] ?? true,
-            (string?) e["release"])).ToList();
+            (string?) e["release"],
+            e["skip"]?.Select(s => (string) s!).ToList() ?? new List<string>(),
+            (string?) e["cancel"])).ToList();
 
     /// <summary>The entries that play in a room.</summary>
     public static IEnumerable<CutsceneEntry> InRoom(IEnumerable<CutsceneEntry> entries, string scene) =>

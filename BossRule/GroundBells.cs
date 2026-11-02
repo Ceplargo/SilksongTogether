@@ -23,6 +23,16 @@ internal static class GroundBells {
     private const string Waiting = "State 1";
     private static readonly RiseWatch Watch = new(Waiting, "State 2");
 
+    /// <summary>A following game's holders the scene host's rise was applied to, until this game sees them rise.
+    /// </summary>
+    private static readonly HashSet<string> Applied = new();
+
+    // a rise that comes before its holder is out and waiting, kept 0.5 s: in the gates her Charge brought the friend's
+    // holders out at most 0.036 s after the scene host's rose; her Charges come seconds apart, so a kept rise never
+    // reaches the next one
+    private const float KeepS = 0.5f;
+    private static readonly EarlyRises Early = new(KeepS);
+
     /// <summary>Sends a holder's rise to the room's other players; set by the client add-on.</summary>
     public static Action<string>? Send;
 
@@ -40,6 +50,8 @@ internal static class GroundBells {
             _room = scene;
             _holders = [];
             Watch.Clear();
+            Applied.Clear();
+            Early.Clear();
         }
 
         // the room's objects load a moment after its name changes
@@ -53,7 +65,30 @@ internal static class GroundBells {
         if (_holders.Count == 0) return;
         var follows = Follows();
         foreach (var (fsm, path) in _holders) {
-            if (fsm != null && Watch.Rose(path, fsm.ActiveStateName) && !follows) Send?.Invoke(Prefix + path);
+            if (fsm == null) continue;
+            if (follows && fsm.gameObject.activeInHierarchy && fsm.ActiveStateName == Waiting &&
+                Early.Due(path, Time.unscaledTime)) {
+                fsm.SendEvent("ENTER");
+                Applied.Add(path);
+                Debug.Log($"[BossRule] Ground Bell rise applied as it came out: {path}");
+            }
+
+            if (!Watch.Rose(path, fsm.ActiveStateName)) continue;
+            if (!follows) {
+                Debug.Log($"[BossRule] Ground Bell rise sent: {path}");
+                Send?.Invoke(Prefix + path);
+                continue;
+            }
+
+            // print only (a gate's friend's bell up 0.69 s after the host's, cause not proven): how this one came up
+            var how = Applied.Remove(path) ? "the scene host's rise applied" : "no rise of the scene host's applied";
+            Debug.Log($"[BossRule] Ground Bell rose here: {path} ({how})");
+        }
+
+        // a kept rise whose holder did not come out and wait in time: this game's holder missed it
+        foreach (var path in Early.Expired(Time.unscaledTime)) {
+            Debug.Log($"[BossRule] Ground Bell rise kept {KeepS:0.0} s and dropped: {path} " +
+                      "(its holder was not out and waiting)");
         }
     }
 
@@ -74,14 +109,36 @@ internal static class GroundBells {
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
     public static bool Follows() => NotSceneHost?.Invoke() == true;
 
-    /// <summary>The scene host's holder of that path rose: this game's rises too, if it is out and waits.</summary>
+    /// <summary>Whether a rise that comes before its holder is out and waiting is kept for it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
+    public static bool KeepsEarly() => true;
+
+    /// <summary>
+    /// The scene host's holder of that path rose: this game's rises too, now if it is out and waits, else as it comes
+    /// out and waits within KeepS (Tick).
+    /// </summary>
     public static void Echo(string path) {
         if (!Follows()) return;
+        var found = false;
+        var applied = false;
         foreach (var (fsm, holder) in _holders) {
-            if (holder == path && fsm != null && fsm.gameObject.activeInHierarchy && fsm.ActiveStateName == Waiting) {
+            if (holder != path || fsm == null) continue;
+            found = true;
+            if (fsm.gameObject.activeInHierarchy && fsm.ActiveStateName == Waiting) {
                 fsm.SendEvent("ENTER");
+                Applied.Add(path);
+                applied = true;
+                Debug.Log($"[BossRule] Ground Bell rise applied: {path}");
+                continue;
             }
+
+            // print only
+            var why = fsm.gameObject.activeInHierarchy ? "in " + fsm.ActiveStateName : "not out";
+            Debug.Log($"[BossRule] Ground Bell rise not applied yet: {path} ({why})");
         }
+
+        if (!found) Debug.Log($"[BossRule] Ground Bell rise for no holder here: {path} ({_holders.Count} holders)");
+        if (!applied && KeepsEarly()) Early.Came(path, Time.unscaledTime);
     }
 
     private static string PathOf(Transform t) => t.parent == null ? t.name : PathOf(t.parent) + "/" + t.name;

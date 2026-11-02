@@ -350,9 +350,9 @@ internal class HealthManagerComponent : EntityComponent {
             return;
         }
 
-        if (!IsControlled) {
-            PlayMissedHits(observedHealthManager);
-        }
+        // (coop) another player's landed hits, here in every game: the scene host's of the others (B), and in the
+        // others the scene host's and theirs (B's mirror)
+        PlayMissedHits(observedHealthManager);
 
         var newHp = observedHealthManager.hp;
         if (newHp != _lastHp) {
@@ -555,6 +555,12 @@ internal class HealthManagerComponent : EntityComponent {
             if (!isControlled && change < 0 && _healthManager.Host != null) {
                 // (coop) another player's hit landed in its game, with that stun: played here (see MissedHits)
                 MissedHits.For(_healthManager.Host.GetInstanceID()).Landed(Time.unscaledTime, stun);
+            } else if (isControlled && change < 0 && _healthManager.Client != null && PlaysHostHits()) {
+                // (coop) B's mirror: a hit that landed in the scene host's game (its own, or another player's it
+                // played), shown here once, with no stun (the scene host's game runs the enemy); the copied swings no
+                // longer show it, where the copy of the enemy trailed or two copies of a swing doubled (the Bone Flyer
+                // Giant: 16 hit sounds for the host's 13 hits; Lace: one of 15 missing)
+                MissedHits.For(_healthManager.Client.GetInstanceID()).Landed(Time.unscaledTime, 0f);
             }
 
             var before = GetCurrentHp();
@@ -612,6 +618,21 @@ internal class HealthManagerComponent : EntityComponent {
     /// </summary>
     internal static bool HostsHits(HealthManager manager) =>
         ByManager.TryGetValue(manager.GetInstanceID(), out var c) && c._hostId == manager.GetInstanceID() && !c.IsControlled;
+
+    /// <summary>
+    /// (coop) Whether this game shows another player's hits on that enemy from that player's landed hits: the scene
+    /// host's original in the host's game (B), the copy in the others (B's mirror).
+    /// </summary>
+    internal static bool ShowsLandedHits(HealthManager manager) =>
+        ByManager.TryGetValue(manager.GetInstanceID(), out var c) &&
+        (c._hostId == manager.GetInstanceID() && !c.IsControlled || c._clientId == manager.GetInstanceID() && c.IsControlled);
+
+    /// <summary>
+    /// (coop) Whether a game that follows the scene host plays each of its health drops as a hit (B's mirror). Not
+    /// inlined: boss_hits' twin skips it, which gives false: then the friend's game shows none of the host's hits.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool PlaysHostHits() => true;
 
     /// <summary>(coop) A stun this game's own hit gave its copy of that enemy: sent with its next health change.</summary>
     internal static void AddOwnStun(HealthManager manager, float stun) {
