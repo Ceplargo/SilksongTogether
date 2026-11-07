@@ -32,7 +32,26 @@ internal static class DamagePairs {
         return pairs;
     }
 
-    /// <summary>(coop) Test-only, set by CoopQA: each box left without a match is logged when its entity is made.
+    // A delayed old activation must be replaced even while the native keeps the same damage state.
+    internal static bool RefreshDue(float now, float last) => now - last >= 0.05f && KeepsDamageFresh();
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool KeepsDamageFresh() => true;
+
+    // Entity owns root activation; damage updates may only switch child objects.
+    internal static bool CopiesActivation(bool isRoot) => !isRoot || !KeepsRootHidden();
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool KeepsRootHidden() => true;
+
+    // A cancelled state's replay must not reopen a child already followed by DamageHeroComponent.
+    internal static bool UsesNativeActivation(bool resetOnExit, bool recursive, bool pairedChild) =>
+        resetOnExit && !recursive && pairedChild && KeepsDamageActivation();
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool KeepsDamageActivation() => true;
+
+    /// <summary>(coop) Test-only, set by CoopQA: log unmatched boxes.
     /// </summary>
     internal static bool Logs;
 

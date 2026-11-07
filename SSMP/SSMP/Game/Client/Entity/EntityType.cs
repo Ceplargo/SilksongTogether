@@ -243,5 +243,7 @@ internal enum EntityType {
     Lace,
     GrandMotherSilk,
     LostLace,
-    GrassBall
+    GrassBall,
+    MossBoneCocoon,
+    ShellwoodHive
 }

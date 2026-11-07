@@ -47,6 +47,10 @@
    "kind": "room"
   },
   "needs": {},
+  "follow": {
+   "state": "Enter Pause",
+   "from": "Idle|Wait For Bench Break"
+  },
   "hp": 1000,
   "phases": [
    {

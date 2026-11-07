@@ -212,4 +212,15 @@ public class BossCatalogTests {
         var shipped = BossCatalog.Load(File.ReadAllText(Path.Combine("..", "..", "..", "..", "BossRule", "bosses.json")));
         Assert.Equal(["spinnerDefeated"], shipped.Where(b => b.Release).Select(b => b.Flag));
     }
+
+    [Fact]
+    public void The_Ant_Trappers_arena_follows_the_scene_hosts_into_Enter_Pause() {
+        // (coop) on a first meeting the other games' arenas waited in Idle for their own hero under the lid it removes,
+        // so their Unencountered Floor stayed (bosses Task 19, NOTES 327)
+        var shipped = BossCatalog.Load(File.ReadAllText(Path.Combine("..", "..", "..", "..", "BossRule", "bosses.json")));
+        var follow = shipped.Single(b => b.Flag == "defeatedAntTrapper").Follow;
+        Assert.NotNull(follow);
+        Assert.Equal("Enter Pause", follow!.State);
+        Assert.Equal(["Idle", "Wait For Bench Break"], follow.From.Split('|'));
+    }
 }

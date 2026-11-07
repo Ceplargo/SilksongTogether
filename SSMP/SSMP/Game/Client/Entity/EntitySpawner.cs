@@ -14,7 +14,7 @@ internal static class EntitySpawner {
     /// </summary>
     /// <param name="spawnedType">The type of the spawned entity.</param>
     /// <returns>true for the types it has an implementation for; otherwise false.</returns>
-    public static bool CanSpawn(EntityType spawnedType) => spawnedType == EntityType.GrassBall;
+    public static bool CanSpawn(EntityType spawnedType) => EntitySpawnRules.PrefabName(spawnedType) != null;
 
     /// <summary>
     /// Spawn the game object for an entity with the given type that is spawned from the other given type.
@@ -30,7 +30,8 @@ internal static class EntitySpawner {
         GameObject clientObject,
         List<PlayMakerFSM> clientFsms
     ) {
-        if (spawnedType == EntityType.GrassBall) {
+        var prefabName = EntitySpawnRules.PrefabName(spawnedType);
+        if (prefabName != null) {
             IEnumerable<PlayMakerFSM> sourceFsms = clientObject != null
                 ? clientObject.GetComponentsInChildren<PlayMakerFSM>(true)
                 : clientFsms;
@@ -39,6 +40,7 @@ internal static class EntitySpawner {
                 foreach (var state in fsm.FsmStates) {
                     foreach (var action in state.Actions) {
                         var prefab = action switch {
+                            CreateObject createAction => createAction.gameObject?.Value,
                             SpawnObjectFromGlobalPool spawnAction => spawnAction.gameObject?.Value,
                             FlingObjectsFromGlobalPool flingAction => flingAction.gameObject?.Value,
                             FlingObjectsFromGlobalPoolVel flingAction => flingAction.gameObject?.Value,
@@ -46,19 +48,23 @@ internal static class EntitySpawner {
                             _ => null
                         };
 
-                        if (prefab != null && prefab.name.Equals("Grass Ball", StringComparison.OrdinalIgnoreCase)) {
-                            return prefab.Spawn(Vector3.zero, Quaternion.identity);
+                        if (prefab != null && prefab.name.Equals(prefabName, StringComparison.OrdinalIgnoreCase)) {
+                            return spawnedType == EntityType.WoodWasp
+                                ? UnityEngine.Object.Instantiate(prefab, Vector3.zero, Quaternion.identity)
+                                : prefab.Spawn(Vector3.zero, Quaternion.identity);
                         }
                     }
                 }
             }
 
             foreach (var prefab in Resources.FindObjectsOfTypeAll<GameObject>()) {
-                if (prefab.scene.IsValid() || !prefab.name.Equals("Grass Ball", StringComparison.OrdinalIgnoreCase)) {
+                if (prefab.scene.IsValid() || !prefab.name.Equals(prefabName, StringComparison.OrdinalIgnoreCase)) {
                     continue;
                 }
 
-                return prefab.Spawn(Vector3.zero, Quaternion.identity);
+                return spawnedType == EntityType.WoodWasp
+                    ? UnityEngine.Object.Instantiate(prefab, Vector3.zero, Quaternion.identity)
+                    : prefab.Spawn(Vector3.zero, Quaternion.identity);
             }
         }
 

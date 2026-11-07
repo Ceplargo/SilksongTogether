@@ -81,6 +81,12 @@ internal static partial class EntityFsmActions {
     private static readonly List<ActionInState> ActionsInState = [];
 
     /// <summary>
+    /// (coop) ILHooks for SpawnObjectFromGlobalPool.OnEnter and SpawnObjectFromGlobalPoolOverTime.OnUpdate: what they
+    /// spawn told to ThrownComponent.Flung (the Last Judge's charge bombs).
+    /// </summary>
+    private static ILHook? _spawnPoolHook, _spawnPoolOverTimeHook;
+
+    /// <summary>
     /// ILHook for FlingObjectsFromGlobalPool.OnEnter.
     /// </summary>
     private static ILHook? _flingPoolHook;
@@ -161,6 +167,20 @@ internal static partial class EntityFsmActions {
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
             )!,
             FlingObjectsFromGlobalPoolTimeOnUpdate
+        );
+        _spawnPoolHook = new ILHook(
+            typeof(SpawnObjectFromGlobalPool).GetMethod(
+                nameof(SpawnObjectFromGlobalPool.OnEnter),
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            )!,
+            SpawnTold<SpawnObjectFromGlobalPool>
+        );
+        _spawnPoolOverTimeHook = new ILHook(
+            typeof(SpawnObjectFromGlobalPoolOverTime).GetMethod(
+                "OnUpdate",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            )!,
+            SpawnTold<SpawnObjectFromGlobalPoolOverTime>
         );
         _getRandomChildHook = new ILHook(
             typeof(GetRandomChild).GetMethod(
@@ -270,7 +290,8 @@ internal static partial class EntityFsmActions {
     /// <param name="gameObject">The game object to check for.</param>
     /// <returns>true if the given game object is in the entity registry; otherwise false.</returns>
     private static bool IsObjectInRegistry(GameObject gameObject) {
-        return EntityRegistry.TryGetEntry(gameObject, out _);
+        // (coop) a plain pool spawn is no entity, though its name and FSM match one (PlainSpawns)
+        return PlainSpawns.IsEntity(gameObject.GetInstanceID(), EntityRegistry.TryGetEntry(gameObject, out _));
     }
 
     /// <summary>
@@ -430,6 +451,8 @@ internal static partial class EntityFsmActions {
             // Emit a delegate that pops the spawned game object off the stack and uses it, then puts it back again
             c.EmitDelegate<Func<GameObject, FlingObjectsFromGlobalPool, GameObject>>((go, action) => {
                     //Logger.Debug($"Delegate of FlingObjectsFromGlobalPool: {go.name}");
+                    // (coop) an enemy's throw's fling: followed from the scene host's game (FlungThrows)
+                    SSMP.Game.Client.Entity.Component.ThrownComponent.Flung(action.Fsm.GameObject, go);
                     if (EntitySpawnEvent != null && EntitySpawnEvent.Invoke(
                             new EntitySpawnDetails {
                                 Type = EntitySpawnType.FsmAction,
@@ -530,6 +553,29 @@ internal static partial class EntityFsmActions {
             );
         } catch (Exception e) {
             Logger.Error($"Could not change FlingObjectsFromGlobalPoolTime#OnUpdate IL:\n{e}");
+        }
+    }
+
+    /// <summary>
+    /// (coop) IL edit for a pool spawn action: each object it spawns (after each ObjectPoolExtensions.Spawn call) told to
+    /// ThrownComponent.Flung with the object whose FSM spawned it.
+    /// </summary>
+    private static void SpawnTold<T>(ILContext il) where T : FsmStateAction {
+        try {
+            var c = new ILCursor(il);
+            var found = 0;
+            while (c.TryGotoNext(MoveType.After, i => i.MatchCall(typeof(ObjectPoolExtensions), "Spawn"))) {
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate<Func<GameObject, T, GameObject>>((go, action) => {
+                    SSMP.Game.Client.Entity.Component.ThrownComponent.Flung(action.Fsm?.GameObject, go);
+                    return go;
+                });
+                found++;
+            }
+
+            if (found == 0) Logger.Error($"No ObjectPoolExtensions.Spawn call in {typeof(T).Name} to hook");
+        } catch (Exception e) {
+            Logger.Error($"Could not change {typeof(T).Name} IL:\n{e}");
         }
     }
 

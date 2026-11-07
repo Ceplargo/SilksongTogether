@@ -215,11 +215,13 @@ internal partial class GamePatcher {
 
         RegisterAggressionHooks();
 
+        AddHook(typeof(AudioSource), nameof(AudioSource.Play), AudioSourceOnPlay, Type.EmptyTypes);
         AddHook(typeof(DamageEnemies), nameof(DamageEnemies.LateFixedUpdate), DamageEnemiesOnLateFixedUpdate);
         AddHook(typeof(HeroController), nameof(HeroController.CanRecoil), HeroControllerOnCanRecoil);
         AddHook(typeof(HeroController), nameof(HeroController.RecoilDown), HeroControllerOnRecoilDown);
         AddHook(typeof(BouncePod), nameof(BouncePod.Hit), IgnoreRemoteHit<BouncePod>);
         AddHook(typeof(BounceBalloon), nameof(BounceBalloon.Hit), IgnoreRemoteHit<BounceBalloon>);
+        AddHook(typeof(HitResponse), nameof(HitResponse.Hit), HitResponseOnHit);
         AddHook(
             typeof(NailSlashTerrainThunk),
             nameof(NailSlashTerrainThunk.OnCollisionEnter2D),
@@ -370,14 +372,23 @@ internal partial class GamePatcher {
     /// <param name="type">The type that declares the method to hook.</param>
     /// <param name="methodName">The name of the method to hook.</param>
     /// <param name="detour">The delegate that replaces the method.</param>
-    private void AddHook(Type type, string methodName, Delegate detour) {
-        var method = type.GetMethod(methodName, InstanceNonPublicFlags | InstancePublicFlags);
+    private void AddHook(Type type, string methodName, Delegate detour, Type[]? parameterTypes = null) {
+        var flags = InstanceNonPublicFlags | InstancePublicFlags;
+        var method = parameterTypes == null ? type.GetMethod(methodName, flags)
+            : type.GetMethod(methodName, flags, null, parameterTypes, null);
         if (method == null) {
             Logger.Error($"Could not hook {type.Name}#{methodName}: method does not exist");
             return;
         }
 
         _hooks.Add(new Hook(method, detour));
+    }
+
+    private static void AudioSourceOnPlay(Action<AudioSource> orig, AudioSource self) {
+        orig(self);
+        if (self.loop) {
+            LoopStarts.Played(self);
+        }
     }
 
     /// <summary>
@@ -774,6 +785,7 @@ internal partial class GamePatcher {
         var (source, first) = (_hitSource, _hitIsFirst);
         _hitSource = hitInstance.Source;
         _hitIsFirst = hitInstance.IsFirstHit;
+        if (IsLocalHitSource(hitInstance)) HealthManagerComponent.NoteOwnHit(self, hitInstance);
         if (HealthManagerComponent.LogsHealth) {
             Logger.Debug($"(coop) hit: {self.name} from {PathOf(hitInstance.Source)}, first {hitInstance.IsFirstHit}, " +
                          $"frame {Time.frameCount}");
@@ -1007,6 +1019,24 @@ internal partial class GamePatcher {
         HitInstance damageInstance
     ) where T : IHitResponder {
         if (RemoteAttackComponent.IsRemoteAttack(damageInstance.Source)) {
+            return IHitResponder.Response.None;
+        }
+
+        return orig(self, damageInstance);
+    }
+
+    /// <summary>
+    /// (coop) Hook for <see cref="HitResponse"/>.<see cref="HitResponse.Hit"/>: a remote player's hit on the local
+    /// player's cocoon is ignored, since each game's cocoon is its own player's and both lie at the room's corpse
+    /// marker (<see cref="PersonalCocoon"/>). Every other object that answers hits this way still takes them.
+    /// </summary>
+    private IHitResponder.HitResponse HitResponseOnHit(
+        Func<HitResponse, HitInstance, IHitResponder.HitResponse> orig,
+        HitResponse self,
+        HitInstance damageInstance
+    ) {
+        if (PersonalCocoon.KeepsRemoteHitsOff() && PersonalCocoon.Is(self.gameObject.name) &&
+            RemoteAttackComponent.IsRemoteAttack(damageInstance.Source)) {
             return IHitResponder.Response.None;
         }
 

@@ -2475,7 +2475,8 @@
     "type": "Judge",
     "parent_name": null,
     "components": [
-      "Rotation"
+      "Rotation",
+      "ChildrenActivation"
     ],
     "internal_name": "Coral Judge",
     "fsm_names": [
@@ -2654,7 +2655,8 @@
     "type": "BellBeast",
     "parent_name": null,
     "components": [
-      "Rotation"
+      "Rotation",
+      "BodyBox"
     ],
     "internal_name": "Bone Beast",
     "fsm_names": [
@@ -3161,6 +3163,14 @@
     "fsm_names": [
       "Control",
       "lowpass_audio_by_area"
+    ],
+    "children": [
+      {
+        "base_object_name": "Sprite",
+        "type": "Fluttermite",
+        "parent_name": "Mitefly",
+        "fsm_names": ["Motion"]
+      }
     ]
   },
   {
@@ -3249,7 +3259,8 @@
     "type": "Rhinogrund",
     "parent_name": null,
     "components": [
-      "Rotation"
+      "Rotation",
+      "ChildPlaces"
     ],
     "internal_name": "Rhino",
     "fsm_names": [
@@ -3309,5 +3320,21 @@
     "fsm_names": [
       "grass ball control"
     ]
+  },
+  {
+    "base_object_name": "MossBone Cocoon",
+    "type": "MossBoneCocoon",
+    "parent_name": null,
+    "components": ["Rotation"],
+    "internal_name": "MossBone Cocoon",
+    "fsm_names": ["Control"]
+  },
+  {
+    "base_object_name": "Control",
+    "type": "ShellwoodHive",
+    "parent_name": "Shellwood Hive",
+    "components": ["Rotation"],
+    "internal_name": "Shellwood Hive",
+    "fsm_names": ["Control", "DAMAGE EFFECTS"]
   }
 ]

@@ -31,6 +31,12 @@ internal class BossRuleServerAddon : ServerAddon {
             if (inRoom.Length > 0) _sender.SendSingleData(BossPacketId.WaitStatus, packet, inRoom);
         });
         receiver.RegisterPacketHandler<FightStarted>(BossPacketId.FightStarted, OnFightStarted);
+        receiver.RegisterPacketHandler<BossReady>(BossPacketId.BossReady, (id, packet) => {
+            var others = InRoom(packet.Scene).Where(p => p != id).ToArray();
+            if (others.Length > 0) {
+                _sender.SendSingleData(BossPacketId.BossReady, new BossReady { Scene = packet.Scene, Player = id }, others);
+            }
+        });
         receiver.RegisterPacketHandler<Downed>(BossPacketId.Downed, (id, packet) => Tell(packet.Scene, _fights.Downed(packet.Scene, id)));
         receiver.RegisterPacketHandler<BossDefeated>(BossPacketId.BossDefeated,
             (_, packet) => Tell(packet.Scene, _fights.BossDefeated(packet.Scene)));

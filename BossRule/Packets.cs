@@ -14,7 +14,8 @@ internal enum BossPacketId {
     Outcome,
     ArenaFollow,
     Mark,
-    CutsceneState
+    CutsceneState,
+    BossReady
 }
 
 internal abstract class BossPacket : IPacketData {
@@ -34,6 +35,7 @@ internal abstract class BossPacket : IPacketData {
         BossPacketId.ArenaFollow => new ArenaFollow(),
         BossPacketId.Mark => new Mark(),
         BossPacketId.CutsceneState => new PacketDataCollection<CutsceneState>(),
+        BossPacketId.BossReady => new BossReady(),
         _ => new Outcome()
     };
 
@@ -96,6 +98,26 @@ internal class FightStarted : BossPacket {
         Fighters = ReadIds(packet);
         SenderFights = packet.ReadBool();
         Self = packet.ReadUShort();
+    }
+}
+
+/// <summary>
+/// (coop) A player's game has a listed boss room's boss: its start gate is armed and every body is there. From a game:
+/// the room; from the server, to the other players in the room: with the sender's id. The game that runs the boss holds
+/// the fight's start for it (StartGate, ReadyWait).
+/// </summary>
+internal class BossReady : BossPacket {
+    public string Scene = "";
+    public ushort Player;
+
+    public override void WriteData(IPacket packet) {
+        packet.Write(Scene);
+        packet.Write(Player);
+    }
+
+    public override void ReadData(IPacket packet) {
+        Scene = packet.ReadString();
+        Player = packet.ReadUShort();
     }
 }
 

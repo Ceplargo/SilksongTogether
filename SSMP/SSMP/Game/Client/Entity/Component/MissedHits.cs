@@ -18,7 +18,7 @@ internal sealed class MissedHits {
 
     private static readonly Dictionary<int, MissedHits> ByEnemy = new();
 
-    private readonly List<(double At, float Stun)> _landed = [];
+    private readonly List<(double At, float Stun, int Kind)> _landed = [];
     private readonly List<double> _shown = [];
 
     /// <summary>That enemy's record (by its health manager's instance id) in this room.</summary>
@@ -35,8 +35,8 @@ internal sealed class MissedHits {
     public static void Clear() => ByEnemy.Clear();
 
     /// <summary>Another player's game reported its hit on the enemy at that time, with the stun it had there.</summary>
-    public void Landed(double at, float stun = 1f) {
-        if (!Answer(_shown, at)) _landed.Add((at, stun));
+    public void Landed(double at, float stun = 1f, int kind = 0) {
+        if (!Answer(_shown, at)) _landed.Add((at, stun, kind));
     }
 
     /// <summary>A copied swing hit the enemy here at that time.</summary>
@@ -53,9 +53,12 @@ internal sealed class MissedHits {
     /// The stuns of the landed hits no copied swing answered within Window, now past it; each is due once. With atOnce
     /// (copied swings no longer damage the enemy: GamePatcher.OnlyLandedHits) every landed hit is due at once.
     /// </summary>
-    public List<float> Due(double now, bool atOnce = false) {
+    public List<float> Due(double now, bool atOnce = false) => DueHits(now, atOnce).Select(h => h.Stun).ToList();
+
+    /// <summary>As Due, each with its hit's kind (HitKind).</summary>
+    public List<(float Stun, int Kind)> DueHits(double now, bool atOnce = false) {
         _shown.RemoveAll(t => now - t > Window);
-        var due = _landed.Where(l => atOnce || now - l.At > Window).Select(l => l.Stun).ToList();
+        var due = _landed.Where(l => atOnce || now - l.At > Window).Select(l => (l.Stun, l.Kind)).ToList();
         _landed.RemoveAll(l => atOnce || now - l.At > Window);
         return due;
     }

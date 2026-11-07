@@ -72,12 +72,17 @@ internal class ThrownComponent : EntityComponent {
     /// trapdoors. (coop) An entry with a rest state counts an object whose first FSM is in that state as not out: the
     /// scene host's game sends only those in action, and the other games switch off theirs at rest, so their own room
     /// FSM's picks never show (each game dropped the Skull King's boulders nearest its own hero, by the room's own Drop
-    /// FSM).
+    /// FSM). (coop) The Ant Trapper's barb traps: each barb's own FSM throws it to its rest place moved at random
+    /// (TranslateRandom), so the friend's lay 1.1 to 3.2 units from the host's, hurting, for its whole life (NOTES 339).
+    /// (coop) The Beastfly's summon cages: each picks where it drops at random (RandomFloat, SetPosition), so the
+    /// friend's fell up to 5.8 units from the host's, hurting (NOTES 342).
     /// </summary>
     private static readonly Dictionary<string, (string Container, string[] Parts, string? AtRest)[]> StageFollowed = new() {
         ["Trobbio"] = [("Flare Glitter", ["Explosion", "Pt Antic"], null), ("Trapdoor Bursts/Bursts", [], null)],
         ["Tormented Trobbio"] = [("Flare Glitter", ["Explosion", "Pt Antic"], null), ("Trapdoor Bursts/Bursts", [], null)],
-        ["Skull King"] = [("Boulders Battle", [], "Dormant")]
+        ["Skull King"] = [("Boulders Battle", [], "Dormant")],
+        ["Bone Hunter Trapper"] = [("Barb Traps", [], "Dormant"), ("Barb Traps - Add After Intro", [], "Dormant")],
+        ["Bone Flyer Giant"] = [("Summon Cages", [], "Dormant")]
     };
 
     /// <summary>
@@ -96,7 +101,7 @@ internal class ThrownComponent : EntityComponent {
     /// </summary>
     public static bool HasStage(string name) =>
         StageFollowed.ContainsKey(name) || StageBeside.ContainsKey(name) || StageOwn.ContainsKey(name) ||
-        RootFollowed.ContainsKey(name);
+        RootFollowed.ContainsKey(name) || FlungThrows.Has(name);
 
     /// <summary>
     /// (coop) A boss's own objects (its descendants of these names, which its start lets go of) followed as stage
@@ -171,6 +176,7 @@ internal class ThrownComponent : EntityComponent {
     /// </summary>
     private sealed class Copy {
         public readonly GameObject GameObject;
+        public bool Recovered;
         public readonly PlayMakerFSM[] Fsms;
         public readonly byte[] Given;
         public readonly Object[] Parts;
@@ -219,6 +225,8 @@ internal class ThrownComponent : EntityComponent {
         /// <summary>(coop) Each hero damager's amount (StageDamage).</summary>
         public byte[] Damages = [];
         public (byte Fsm, byte State, byte Action) Spawner = (NoState, NoState, NoState);
+        public GameObject? Prefab;
+        public Vector2 Scale = Vector2.one;
     }
 
     private readonly NetClient _netClient;
@@ -313,6 +321,21 @@ internal class ThrownComponent : EntityComponent {
     private uint _stamp;
     private bool _changed;
 
+    /// <summary>(coop) The live components whose enemy's throws fling something followed (FlungThrows).</summary>
+    private static readonly List<ThrownComponent> Flinging = [];
+
+    /// <summary>(coop) The pool prefab of each flung name, found once.</summary>
+    private static readonly Dictionary<string, GameObject> FlungPrefabs = new();
+
+    /// <summary>(coop) The enemy's name, if its throws fling something followed.</summary>
+    private string? _flinger;
+
+    /// <summary>(coop) Other games: the flung throws this game has made its copy of, until the scene host's ends.</summary>
+    private readonly HashSet<byte> _flungCopied = [];
+
+    /// <summary>(coop) The throws whose copy here ended itself (switched off, not taken away by its parent).</summary>
+    private readonly HashSet<byte> _endedItself = [];
+
     public ThrownComponent(
         NetClient netClient,
         ushort entityId,
@@ -323,6 +346,11 @@ internal class ThrownComponent : EntityComponent {
         MonoBehaviourUtil.Instance.OnFixedUpdateEvent += OnFixedUpdate;
 
         var original = gameObject.Host;
+        if (original != null && FlungThrows.Has(original.name)) {
+            _flinger = original.name;
+            Flinging.Add(this);
+        }
+
         var number = FirstStageNumber;
         if (original != null && RootFollowed.TryGetValue(original.name, out var variables) && FollowsRootObjects()) {
             foreach (var (variable, hand) in variables) {
@@ -345,6 +373,8 @@ internal class ThrownComponent : EntityComponent {
         }
 
         foreach (var (container, parts, rest) in StageFollowed.TryGetValue(original.name, out var stageObjects) ? stageObjects : []) {
+            if (container.StartsWith("Barb Traps") && !FollowsBarbTraps()) continue;
+            if (container == "Summon Cages" && !FollowsSummonCages()) continue;
             var stage = original.transform.parent.Find(container);
             if (stage == null) {
                 continue;
@@ -433,6 +463,20 @@ internal class ThrownComponent : EntityComponent {
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static bool FollowsRootObjects() => true;
+
+    /// <summary>
+    /// (coop) Whether the Ant Trapper's barb traps are followed (StageFollowed). Not inlined: trapper_barbs' twin skips
+    /// it, which gives false.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool FollowsBarbTraps() => true;
+
+    /// <summary>
+    /// (coop) Whether the Beastfly's summon cages are followed (StageFollowed). Not inlined: beastfly_cages' twin skips
+    /// it, which gives false.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool FollowsSummonCages() => true;
 
     /// <summary>
     /// (coop) Whether an object its enemy holds is kept from being predicted past the copy that catches it
@@ -605,6 +649,8 @@ internal class ThrownComponent : EntityComponent {
             return;
         }
 
+        _endedItself.Remove(number); // a new copy of that number: its last one's end is not this one's (the review)
+
         foreach (var (other, otherCopy) in _copies) {
             if (otherCopy.GameObject == copy) {
                 _ended.Add(other);
@@ -776,6 +822,10 @@ internal class ThrownComponent : EntityComponent {
             data.Packet.Write(followed.Spawner.Fsm);
             data.Packet.Write(followed.Spawner.State);
             data.Packet.Write(followed.Spawner.Action);
+            // (coop) its scale: a flung bell picks its own size (FlungThrows)
+            var scale = followed.GameObject.transform.localScale;
+            data.Packet.Write(scale.x);
+            data.Packet.Write(scale.y);
         }
     }
 
@@ -797,6 +847,7 @@ internal class ThrownComponent : EntityComponent {
         var lead = _netClient.UpdateManager.AverageRtt / 2000f;
         foreach (var (number, copy) in _copies) {
             if (copy.GameObject == null || !copy.GameObject.activeInHierarchy) {
+                if (copy.GameObject != null && !copy.GameObject.activeSelf) _endedItself.Add(number);
                 _ended.Add(number);
                 continue;
             }
@@ -823,6 +874,9 @@ internal class ThrownComponent : EntityComponent {
 
             transform.position = new Vector3(position.x, position.y, transform.position.z);
             FollowsTurn(transform, target.Angle);
+            if (FlungThrows.IsFlung(target.Spawner.Fsm)) {
+                transform.localScale = new Vector3(target.Scale.x, target.Scale.y, transform.localScale.z);
+            }
             if (copy.GameObject.TryGetComponent<Rigidbody2D>(out var body)) {
                 body.linearVelocity = target.Velocity;
                 _carried[body] = Time.time;
@@ -1068,20 +1122,84 @@ internal class ThrownComponent : EntityComponent {
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void CopiesLate(byte number, Target target) {
-        var (fsm, state, action) = target.Spawner;
-        if (GameObject.Client == null || fsm == NoState) {
+        if (target.Prefab == null) return;
+        Follow(number, target.Prefab.Spawn(target.Position));
+        if (_copies.TryGetValue(number, out var copy)) copy.Recovered = true;
+    }
+
+    /// <summary>
+    /// (coop) Called by the FlingObjectsFromGlobalPool hook for every object flung from the pool, with the object whose FSM
+    /// flung it. One of an enemy's throws' (FlungThrows): the scene host's game follows it; the other games put their
+    /// own back in the pool at once, since the scene host's shows there instead (CopiesFlung).
+    /// </summary>
+    internal static void Flung(GameObject? thrower, GameObject? spawned) {
+        if (thrower == null || spawned == null) return;
+        foreach (var component in Flinging) {
+            if (component._flinger == null || !FlungThrows.ThrownBy(component._flinger, thrower.name) ||
+                !FlungThrows.IsFlungObject(component._flinger, spawned.name)) continue;
+            if (!component.IsControlled) {
+                component.Track(spawned, FlungThrows.Marker, 0, 0);
+            } else if (FollowsFlung()) {
+                spawned.SetActive(false);
+            }
+
             return;
         }
+    }
+
+    /// <summary>
+    /// (coop) Other games: whether a replayed spawn of this prefab by this object is left out, as the scene host's
+    /// spawned ones show here instead (CopiesFlung): the Last Judge's charge bombs.
+    /// </summary>
+    internal static bool SuppressesFlung(GameObject? thrower, GameObject? prefab) {
+        if (thrower == null || prefab == null || !FollowsFlung()) return false;
+        foreach (var component in Flinging) {
+            if (component._flinger != null && component.IsControlled &&
+                FlungThrows.ThrownBy(component._flinger, thrower.name) &&
+                FlungThrows.IsFlungObject(component._flinger, prefab.name)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// (coop) Other games: a copy of what the scene host's throw flung, from this game's pool, then followed.
+    /// </summary>
+    private void CopiesFlung(byte number, Target target) {
+        if (_flinger == null || FlungThrows.Flung(_flinger) is not { } name) return;
+        if (!FlungPrefabs.TryGetValue(name, out var prefab) || prefab == null) {
+            prefab = null!;
+            foreach (var pooled in ObjectPool.instance.pooledObjects.Keys) {
+                if (pooled != null && pooled.name == name) {
+                    prefab = pooled;
+                    break;
+                }
+            }
+
+            if (prefab == null) return;
+            FlungPrefabs[name] = prefab;
+        }
+
+        Follow(number, prefab.Spawn(target.Position));
+    }
+
+    /// <summary>
+    /// (coop) Whether the other games show the scene host's flung objects in place of their own. Not inlined:
+    /// widow_bells' twin skips it, which gives false.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool FollowsFlung() => true;
+
+    private GameObject? SpawnPrefab(Target target) {
+        var (fsm, state, action) = target.Spawner;
+        if (GameObject.Client == null || fsm == NoState) return null;
 
         var fsms = GameObject.Client.GetComponents<PlayMakerFSM>();
         if (fsm >= fsms.Length || state >= fsms[fsm].FsmStates.Length ||
             action >= fsms[fsm].FsmStates[state].Actions.Length ||
-            fsms[fsm].FsmStates[state].Actions[action] is not SpawnObjectFromGlobalPool spawn ||
-            spawn.gameObject?.Value is not { } prefab || prefab == null) {
-            return;
-        }
+            fsms[fsm].FsmStates[state].Actions[action] is not SpawnObjectFromGlobalPool spawn) return null;
 
-        Follow(number, prefab.Spawn(target.Position));
+        return spawn.gameObject?.Value;
     }
 
     /// <inheritdoc />
@@ -1089,6 +1207,7 @@ internal class ThrownComponent : EntityComponent {
         WakesResting();
         _copies.Clear();
         _targets.Clear();
+        _endedItself.Clear();
         _stageCopies.Clear();
         _stageOut.Clear();
     }
@@ -1209,6 +1328,7 @@ internal class ThrownComponent : EntityComponent {
 
     /// <inheritdoc />
     public override void InitializeClient(uint sceneHostEpoch) {
+        _endedItself.Clear(); // a host change: the numbers start over (the short review, 2026-11-05)
         _followed.Clear();
         _stageFollowed.Clear();
         _stageSentOut.Clear();
@@ -1290,8 +1410,19 @@ internal class ThrownComponent : EntityComponent {
 
             if (number < FirstStageNumber) {
                 target.Spawner = (data.Packet.ReadByte(), data.Packet.ReadByte(), data.Packet.ReadByte());
-                if (first && !_copies.ContainsKey(number)) {
+                target.Scale = new Vector2(data.Packet.ReadFloat(), data.Packet.ReadFloat());
+                if (FlungThrows.IsFlung(target.Spawner.Fsm)) {
+                    if (FlungThrows.NeedsCopy(_copies.ContainsKey(number), _flungCopied.Contains(number)) && FollowsFlung()) {
+                        CopiesFlung(number, target);
+                        _flungCopied.Add(number);
+                    }
+                } else {
+                // Keep the source while the parent exists; its final death can destroy it before the throw arrives.
+                target.Prefab = SpawnPrefab(target) ?? target.Prefab;
+                // A dying parent can hide its child throw before the release update arrives.
+                if (ThrownCopies.NeedsCopy(first, _copies.ContainsKey(number), _endedItself.Contains(number))) {
                     CopiesLate(number, target);
+                }
                 }
             }
 
@@ -1307,8 +1438,8 @@ internal class ThrownComponent : EntityComponent {
             _stageOut[number] = _targets.TryGetValue(number, out var stageTarget) && InUpdate(stageTarget, stamp, now);
         }
 
-        // What an update leaves out has ended in the scene host's game: its copy goes on by itself. The update lists
-        // all live ones, so any older target not in it is gone
+        // Each update lists all live throws. A recovered copy's restarted timer must not outlive its native;
+        // ordinary copies keep finishing locally.
         foreach (var (number, target) in _targets) {
             if (!InUpdate(target, stamp, now)) {
                 _ended.Add(number);
@@ -1316,8 +1447,15 @@ internal class ThrownComponent : EntityComponent {
         }
 
         foreach (var number in _ended) {
+            if (_copies.TryGetValue(number, out var copy) && ThrownCopies.StopsAtNativeEnd(copy.Recovered) &&
+                copy.GameObject != null) {
+                copy.GameObject.SetActive(false);
+            }
+
             _targets.Remove(number);
             _copies.Remove(number);
+            _flungCopied.Remove(number);
+            _endedItself.Remove(number);
         }
 
         _ended.Clear();
@@ -1340,6 +1478,7 @@ internal class ThrownComponent : EntityComponent {
 
     /// <inheritdoc />
     public override void Destroy() {
+        Flinging.Remove(this);
         MonoBehaviourUtil.Instance.OnLateUpdateEvent -= OnLateUpdate;
         MonoBehaviourUtil.Instance.OnFixedUpdateEvent -= OnFixedUpdate;
     }

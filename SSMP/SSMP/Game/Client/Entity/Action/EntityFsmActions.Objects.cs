@@ -351,6 +351,11 @@ internal static partial class EntityFsmActions {
         }
 
         var parent = action.parent.Value;
+        // An independent Wasp follows world coordinates; the native hive's hidden pool must not hide its copy.
+        if (parent != null && Entity.OriginalOf(gameObject) is { } original &&
+            EntityRegistry.TryGetEntry(original, out var entry) && EntityParenting.KeepsWaspDetached(entry.Type)) {
+            return;
+        }
         gameObject.transform.parent = parent != null ? parent.transform : null;
 
         if (action.resetLocalPosition.Value) {

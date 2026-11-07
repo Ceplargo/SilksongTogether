@@ -41,6 +41,54 @@ public class DamagePairsTests {
         Assert.Equal([1, 0, -1], DamagePairs.Align(["Hit", "Body", "Hit"], ["Body", "Hit"]));
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Damage_updates_leave_root_activation_to_the_entity(bool isRoot, bool copy) {
+        Assert.Equal(copy, DamagePairs.CopiesActivation(isRoot));
+    }
+
+    [Theory]
+    [InlineData(true, false, true, true)]
+    [InlineData(false, false, true, false)]
+    [InlineData(true, true, true, false)]
+    [InlineData(true, false, false, false)]
+    [InlineData(false, true, false, false)]
+    public void Only_paired_damage_children_replace_reset_on_exit_replay(
+        bool resetOnExit, bool recursive, bool pairedChild, bool useDamage) {
+        Assert.Equal(useDamage, DamagePairs.UsesNativeActivation(resetOnExit, recursive, pairedChild));
+    }
+
+    [Fact]
+    public void A_late_old_damage_state_gets_a_current_snapshot_even_without_another_attack() {
+        Assert.False(DamagePairs.RefreshDue(1.04f, 1f));
+        Assert.True(DamagePairs.RefreshDue(1.06f, 1f));
+    }
+
+    [Fact]
+    public void A_late_retry_gets_a_fresh_state_before_the_next_tenth_of_a_second() {
+        // Recorded retry at .288 s followed a current snapshot at .242 s; waiting until .345 left it active.
+        Assert.True(DamagePairs.RefreshDue(.3f, .242f));
+    }
+
+    [Fact]
+    public void Losing_a_refresh_does_not_stop_damage_recovery() {
+        Assert.True(DamagePairs.RefreshDue(1.22f, 1.11f));
+        Assert.True(DamagePairs.RefreshDue(1.33f, 1.22f));
+    }
+
+    [Fact]
+    public void A_long_frame_sends_current_damage_once_on_resuming() {
+        Assert.True(DamagePairs.RefreshDue(8f, 1f));
+        Assert.False(DamagePairs.RefreshDue(8f, 8f));
+    }
+
+    [Fact]
+    public void Unchanged_damage_is_not_sent_every_frame() {
+        Assert.False(DamagePairs.RefreshDue(1.01f, 1f));
+        Assert.False(DamagePairs.RefreshDue(1.02f, 1f));
+    }
+
     [Fact]
     public void A_box_left_without_a_match_is_named() {
         string[] clone = ["", "Hit GDash", "Dragoon Blast/hero damager", "Extra"];

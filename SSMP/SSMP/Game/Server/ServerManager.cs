@@ -12,6 +12,7 @@ using SSMP.Api.Eventing.ServerEvents;
 using SSMP.Api.Server;
 using SSMP.Eventing;
 using SSMP.Eventing.ServerEvents;
+using SSMP.Game.Client.Entity;
 using SSMP.Game.Client.Entity.Component;
 using SSMP.Game.Command.Server;
 using SSMP.Game.Server.Auth;
@@ -1072,6 +1073,9 @@ internal abstract class ServerManager : IServerManager {
             foreach (var updateData in entityUpdate.GenericData) {
                 updateData.SenderId = id;
 
+                if (updateData.Type == EntityComponentType.ChildAnimation &&
+                    (!playerData.IsSceneHost || updateData.Packet.Length != 8)) continue;
+
                 if (updateData.Type == EntityComponentType.Health &&
                     !playerData.IsSceneHost &&
                     IsHealingHealthUpdate(updateData)) {
@@ -1103,6 +1107,13 @@ internal abstract class ServerManager : IServerManager {
                 if (existingData == null) {
                     entityData.GenericData.Add(updateData.Clone());
                 } else {
+                    // A late resend must not become the snapshot a new arrival receives.
+                    if (updateData.Type == EntityComponentType.ChildAnimation) {
+                        var incoming = new Packet(updateData.Packet.ToArray());
+                        var previous = new Packet(existingData.Packet.ToArray());
+                        if (EntityParenting.IsOldChildAnimation(incoming.ReadUInt(), incoming.ReadUShort(),
+                                previous.ReadUInt(), previous.ReadUShort())) return;
+                    }
                     existingData.Packet = new Packet(updateData.Packet.ToArray());
                     existingData.SenderId = updateData.SenderId;
                 }

@@ -39,6 +39,10 @@ internal static class ComponentFactory {
                 return new EnemySpawnerComponent(netClient, entityId, objects, GetPair<EnemySpawner>(objects));
             case EntityComponentType.ChildrenActivation:
                 return new ChildrenActivationComponent(netClient, entityId, objects);
+            case EntityComponentType.ChildPlaces:
+                return new ChildPlacesComponent(netClient, entityId, objects);
+            case EntityComponentType.BodyBox:
+                return new BodyBoxComponent(netClient, entityId, objects);
             case EntityComponentType.SpriteRenderer:
                 return new SpriteRendererComponent(netClient, entityId, objects, GetPair<SpriteRenderer>(objects));
             case EntityComponentType.ChallengePrompt:

@@ -17,6 +17,12 @@ namespace SSMP.Game.Client.Entity;
 /// Thread-safe for concurrent reads after initialization.
 /// </summary>
 internal static class EntityRegistry {
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool RegistersTrapBodies() => true;
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool RegistersMiteflySprite() => true;
+
     /// <summary>
     /// The file path of the embedded resource file for the entity registry.
     /// </summary>
@@ -101,6 +107,9 @@ internal static class EntityRegistry {
         PlayMakerFSM[]? fsms = null;
 
         foreach (var entry in entries) {
+            if ((entry.Type is EntityType.MossBoneCocoon or EntityType.ShellwoodHive) && !RegistersTrapBodies()) continue;
+            if (entry.Type == EntityType.Fluttermite && entry.BaseObjectName == "Sprite" &&
+                entry.ParentName == "Mitefly" && !RegistersMiteflySprite()) continue;
             if (!gameObject.name.Contains(entry.BaseObjectName)) {
                 continue;
             }

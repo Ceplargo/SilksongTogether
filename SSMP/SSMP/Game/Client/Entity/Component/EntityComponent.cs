@@ -123,5 +123,11 @@ internal enum EntityComponentType : ushort {
     Thrown,
     AudioLoop,
     /// <summary>(coop) An enemy's layer, kept for a take-over (<see cref="LayerComponent"/>).</summary>
-    Layer
+    Layer,
+    Flock,
+    ChildAnimation,
+    /// <summary>(coop) An enemy's children's places within it (<see cref="ChildPlacesComponent"/>).</summary>
+    ChildPlaces,
+    /// <summary>(coop) An enemy's body box (<see cref="BodyBoxComponent"/>).</summary>
+    BodyBox
 }

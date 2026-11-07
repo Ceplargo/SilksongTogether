@@ -23,6 +23,9 @@ internal class BossRuleClientAddon : ClientAddon {
     private bool _wantArm;
     private bool _connected;
     private float _nextArmTry;
+    private float _nextReadyLook;
+    private string? _readySent;
+    private System.Action<string>? _sendReady;
 
     public BossRuleClientAddon(IReadOnlyList<BossEntry> bosses, IReadOnlyList<CutsceneEntry> cutscenes) {
         _bosses = bosses;
@@ -51,6 +54,16 @@ internal class BossRuleClientAddon : ClientAddon {
             _spectate.OnFightStarted(packet);
             _gate?.FollowStart(packet.Scene, packet.Flag);
         });
+        receiver.RegisterPacketHandler<BossReady>(BossPacketId.BossReady, packet => {
+            StartGate.Loaded.Ready(packet.Player, packet.Scene);
+            Debug.Log($"[BossRule] Player {packet.Player}'s game has the boss of {packet.Scene}");
+        });
+        // A player who comes into this room learns that this game has its boss (they missed the first word); one who
+        // leaves it, or the game, has to say so again
+        clientApi.ClientManager.PlayerEnterSceneEvent += _ => _readySent = null;
+        clientApi.ClientManager.PlayerLeaveSceneEvent += player => StartGate.Loaded.Forget(player.Id);
+        clientApi.ClientManager.PlayerDisconnectEvent += player => StartGate.Loaded.Forget(player.Id);
+        _sendReady = scene => sender.SendSingleData(BossPacketId.BossReady, new BossReady { Scene = scene });
         receiver.RegisterPacketHandler<Outcome>(BossPacketId.Outcome, packet => {
             _spectate.OnOutcome(packet);
             if ((OutcomeKind) packet.Kind == OutcomeKind.Won) _gate?.EndFollowed(packet.Scene);
@@ -169,6 +182,7 @@ internal class BossRuleClientAddon : ClientAddon {
         clientApi.ClientManager.DisconnectEvent += () => {
             _connected = false;
             StartGate.ForgetRoom();
+            StartGate.Loaded.Clear();
             _gate.Disarm();
             _follower.Stop();
             _cutscenes?.Stop();
@@ -179,6 +193,8 @@ internal class BossRuleClientAddon : ClientAddon {
         // The room's entries are set at once, so a start before the first look arms the gate (StartGate.ArmOnStart)
         SceneManager.activeSceneChanged += (_, next) => {
             _gate.Disarm();
+            StartGate.Loaded.Clear();
+            _readySent = null;
             _follower.Stop();
             _wantArm = !PlaysAlone();
             StartGate.Unarmed = _wantArm ? Unarmed(next.name) : null;
@@ -203,6 +219,11 @@ internal class BossRuleClientAddon : ClientAddon {
         if (_wantArm && Time.unscaledTime >= _nextArmTry) {
             _nextArmTry = Time.unscaledTime + 0.5f;
             TryArm();
+        }
+
+        if (_connected && Time.unscaledTime >= _nextReadyLook) {
+            _nextReadyLook = Time.unscaledTime + 0.25f;
+            SayReady();
         }
 
         _gate.Tick();
@@ -235,6 +256,18 @@ internal class BossRuleClientAddon : ClientAddon {
         if (_gate == null || PlayerData.instance == null) return null;
         var candidates = BossCatalog.Candidates(_bosses, scene, PlayerData.instance.GetBool);
         return candidates.Count == 0 ? null : (_gate, candidates);
+    }
+
+    /// <summary>
+    /// (coop) Once this game's gate is armed and every body of its boss is here (its boss scene loaded), tell the others
+    /// in the room, so the game that runs the boss can hold the fight's start for it.
+    /// </summary>
+    private void SayReady() {
+        if (StartGate.Armed?.Entry is not { } entry || _readySent == entry.Scene) return;
+        if (!entry.Boss.Split('|').All(body => SceneObjects.Named(body).Any())) return;
+        _readySent = entry.Scene;
+        _sendReady?.Invoke(entry.Scene);
+        Debug.Log($"[BossRule] This game has {entry.Boss} ({entry.Flag}): told the room");
     }
 
     private void TryArm() {

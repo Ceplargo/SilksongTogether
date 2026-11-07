@@ -35,6 +35,8 @@ internal static partial class EntityFsmActions {
             return false;
         }
 
+        if (action.storeObject.Value is { } spawned) PlainSpawns.Add(spawned.GetInstanceID());
+
         var position = Vector3.zero;
         var euler = Vector3.up;
 
@@ -78,6 +80,11 @@ internal static partial class EntityFsmActions {
         );
 
         if (action.gameObject == null) {
+            return;
+        }
+
+        // (coop) the scene host's spawned ones show here instead (the Last Judge's charge bombs)
+        if (SSMP.Game.Client.Entity.Component.ThrownComponent.SuppressesFlung(action.Fsm.GameObject, action.gameObject.Value)) {
             return;
         }
 
@@ -458,6 +465,11 @@ internal static partial class EntityFsmActions {
     /// <summary>Applies network data to the FSM action: the same object every period while the scene host's FSM stays
     /// in the state, where the copy's spawn point is then.</summary>
     private static void ApplyNetworkDataFromAction(EntityNetworkData data, SpawnObjectFromGlobalPoolOverTime action) {
+        // (coop) the scene host's spawned ones show here instead, each where and when the host's was (its charge bombs)
+        if (SSMP.Game.Client.Entity.Component.ThrownComponent.SuppressesFlung(action.Fsm.GameObject, action.gameObject.Value)) {
+            return;
+        }
+
         var coroutine = MonoBehaviourUtil.Instance.StartCoroutine(Behaviour());
 
         new ActionInState {

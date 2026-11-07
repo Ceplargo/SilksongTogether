@@ -686,6 +686,53 @@ internal static partial class EntityFsmActions {
 
     #endregion
 
+    #region ScaleTo
+
+    private static bool GetNetworkDataFromAction(EntityNetworkData data, ScaleTo action) {
+        var target = action.Fsm.GetOwnerDefaultTarget(action.gameObject);
+        if (target == null || target == action.Fsm.GameObject || IsObjectInRegistry(target)) return false;
+        data.Packet.Write(action.target.Value.x);
+        data.Packet.Write(action.target.Value.y);
+        data.Packet.Write(action.target.Value.z);
+        data.Packet.Write(action.duration.Value);
+        data.Packet.Write(action.delay.Value);
+        data.Packet.Write((byte) action.curve);
+        return true;
+    }
+
+    private static void ApplyNetworkDataFromAction(EntityNetworkData? data, ScaleTo action) {
+        var end = data == null ? action.target.Value
+            : new Vector3(data.Packet.ReadFloat(), data.Packet.ReadFloat(), data.Packet.ReadFloat());
+        var duration = data?.Packet.ReadFloat() ?? action.duration.Value;
+        var delay = data?.Packet.ReadFloat() ?? action.delay.Value;
+        var curve = data == null ? (int) action.curve : data.Packet.ReadByte();
+        var target = action.Fsm.GetOwnerDefaultTarget(action.gameObject);
+        if (target == null || !ScaleTween.ReplaysScaleTo()) return;
+        var start = target.transform.localScale;
+        var elapsed = 0f;
+        MonoBehaviourUtil.Instance.OnUpdateEvent += Follow;
+        new ActionInState {
+            Fsm = action.Fsm,
+            StateName = action.State.Name,
+            ExitAction = () => MonoBehaviourUtil.Instance.OnUpdateEvent -= Follow
+        }.Register();
+        Follow();
+        return;
+
+        // The disabled copy's FSM never runs ScaleTo.OnUpdate; stop its replay with the source state.
+        void Follow() {
+            if (target == null) {
+                MonoBehaviourUtil.Instance.OnUpdateEvent -= Follow;
+                return;
+            }
+            elapsed += Time.deltaTime;
+            target.transform.localScale = Vector3.Lerp(start, end, ScaleTween.Progress(elapsed, delay, duration, curve));
+            if (elapsed >= delay + duration) MonoBehaviourUtil.Instance.OnUpdateEvent -= Follow;
+        }
+    }
+
+    #endregion
+
     #region iTweenScaleTo
 
     /// <summary>Builds network data from the FSM action.</summary>

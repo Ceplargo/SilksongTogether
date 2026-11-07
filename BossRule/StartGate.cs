@@ -25,6 +25,11 @@ internal sealed class StartGate {
     public static StartGate? Armed { get; private set; }
 
     /// <summary>
+    /// (coop) Which other players' games have this room's boss (BossReady); the game that runs it holds the start for them.
+    /// </summary>
+    public static readonly ReadyWait Loaded = new();
+
+    /// <summary>
     /// (coop) From a room's start (or the join) until a gate is armed: the gate to arm and the room's catalog entries.
     /// The look for a start's FSM runs every 0.5 s (BossRuleClientAddon.TryArm); a start that comes first arms the gate
     /// on the spot (<see cref="ArmOnStart"/>).
@@ -54,6 +59,7 @@ internal sealed class StartGate {
     private BattleScene? _followedBattle;
     private string _followedScene = "";
     private bool _shutOnward;
+    private bool _loadHeld;
 
     /// <param name="client">SSMP's client manager.</param>
     /// <param name="sendStatus">Sends the waiting line for a scene to the server ("" once nobody is missing).</param>
@@ -80,6 +86,8 @@ internal sealed class StartGate {
         _area = Presence.AreaColliders(entry);
         _scene = entry.Scene;
         _shutOnward = false;
+        _loadHeld = false;
+        Loaded.Restart();
         Armed = this;
         Unarmed = null;
         Debug.Log($"[BossRule] Holding the start of {entry.Boss} ({entry.Flag}) until everyone is in the arena");
@@ -208,6 +216,8 @@ internal sealed class StartGate {
         _battle = null;
         _pendingEvent = null;
         _pendingBattle = false;
+        _loadHeld = false;
+        Loaded.Restart();
         if (Armed == this) Armed = null;
     }
 
@@ -243,7 +253,44 @@ internal sealed class StartGate {
 
     private bool MayStart() => MayStart(Evaluate());
 
-    private bool MayStart(WaitResult result) => WaitRuleOn ? result.Allowed : !KeepsOutsideOpen();
+    private bool MayStart(WaitResult result) {
+        if (!(WaitRuleOn ? result.Allowed : !KeepsOutsideOpen())) {
+            Loaded.Restart();
+            return false;
+        }
+
+        return !_client.IsSceneHost || !WaitsRegistered() || EveryoneHasBoss();
+    }
+
+    /// <summary>
+    /// (coop) In the game that runs the boss: whether every other player in the arena has said their game has the boss,
+    /// or <see cref="ReadyWait.TimeoutS"/> s passed since all were in. A slow PC loads the boss scene after its hero takes
+    /// control (NOTES 302): a start then left that game without her first throws, then spawned them at once.
+    /// </summary>
+    private bool EveryoneHasBoss() {
+        var inArea = Presence.Collect(_entry!, _client, _area)
+            .Where(p => p.Connected && p.InArea && p.Id != Presence.LocalId).Select(p => p.Id).ToList();
+        var missing = Loaded.Missing(_scene, inArea);
+        var go = Loaded.MayGo(_scene, inArea, Time.unscaledTime);
+        if (missing.Count > 0 && !_loadHeld) {
+            _loadHeld = true;
+            Debug.Log($"[BossRule] Holding the start of {_entry!.Boss} until the games of players " +
+                      $"{string.Join(", ", missing)} have it");
+        }
+
+        if (go && missing.Count > 0) {
+            Debug.Log($"[BossRule] Starting {_entry!.Boss} without players {string.Join(", ", missing)}'s boss " +
+                      $"after {ReadyWait.TimeoutS} s");
+        }
+
+        return go;
+    }
+
+    /// <summary>
+    /// The fight's start waits for every game in the arena to have the boss. Not inlined: boss_ready's twin skips it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool WaitsRegistered() => true;
 
     /// <summary>
     /// With the wait rule off, a game that does not run the boss keeps its arena open while its player is outside it,

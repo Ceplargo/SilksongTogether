@@ -20,6 +20,12 @@ internal class AudioLoopComponent : EntityComponent {
 
     /// <summary>Whether each host source last played a loop, as last sent.</summary>
     private readonly bool[] _lastPlaying;
+    private readonly LoopStarts[] _sourceStarts;
+    private readonly uint[] _lastSentStarts;
+    private readonly uint[] _lastReceivedStarts;
+    private readonly bool[] _lastReceivedPlaying;
+    private ushort _order;
+    private int _lastOrder = -1;
 
     /// <summary>
     /// Whether the loops were sent once: the first update sends them all, so a copy made while a loop already plays (and
@@ -37,6 +43,10 @@ internal class AudioLoopComponent : EntityComponent {
         _hostSources = hostSources;
         _clientSources = clientSources;
         _lastPlaying = hostSources.Select(source => PlaysLoop(source, false)).ToArray();
+        _sourceStarts = hostSources.Select(LoopStarts.Watch).ToArray();
+        _lastSentStarts = new uint[hostSources.Length];
+        _lastReceivedStarts = new uint[clientSources.Length];
+        _lastReceivedPlaying = new bool[clientSources.Length];
     }
 
     /// <summary>
@@ -49,7 +59,7 @@ internal class AudioLoopComponent : EntityComponent {
     private static bool PlaysLoop(AudioSource? source, bool before) =>
         source != null && source.loop && source.isPlaying && (before || source.clip == null || source.timeSamples > 0);
 
-    /// <summary>Callback method to send the host's loops that started or stopped.</summary>
+    /// <summary>Send loop starts and stops, including a Play call while the same loop is already playing.</summary>
     /// <inheritdoc />
     public override void OnUpdate() {
         if (IsControlled) {
@@ -59,10 +69,12 @@ internal class AudioLoopComponent : EntityComponent {
         var changed = false;
         for (var i = 0; i < _hostSources.Length; i++) {
             var playing = PlaysLoop(_hostSources[i], _lastPlaying[i]);
-            if (playing != _lastPlaying[i]) {
-                _lastPlaying[i] = playing;
+            var starts = _sourceStarts[i].Number;
+            if (playing != _lastPlaying[i] || (playing && starts != _lastSentStarts[i])) {
                 changed = true;
             }
+            _lastPlaying[i] = playing;
+            _lastSentStarts[i] = starts;
         }
 
         if (!changed && _sent) {
@@ -73,9 +85,11 @@ internal class AudioLoopComponent : EntityComponent {
         var data = new EntityNetworkData {
             Type = EntityComponentType.AudioLoop
         };
+        data.Packet.Write(++_order);
         data.Packet.Write((byte) _lastPlaying.Length);
-        foreach (var playing in _lastPlaying) {
-            data.Packet.Write(playing);
+        for (var i = 0; i < _lastPlaying.Length; i++) {
+            data.Packet.Write(_lastPlaying[i]);
+            data.Packet.Write(_lastSentStarts[i]);
         }
 
         SendData(data);
@@ -83,17 +97,35 @@ internal class AudioLoopComponent : EntityComponent {
 
     /// <inheritdoc />
     protected override void InitializeHost() {
+        _sent = false;
+    }
+
+    public override void InitializeClient(uint sceneHostEpoch) {
+        _lastOrder = -1;
+        System.Array.Clear(_lastReceivedStarts, 0, _lastReceivedStarts.Length);
+        System.Array.Clear(_lastReceivedPlaying, 0, _lastReceivedPlaying.Length);
     }
 
     /// <summary>The copy's loops start or stop as the host's did; a source that loops nothing is left alone.</summary>
     /// <inheritdoc />
     public override void Update(EntityNetworkData data, bool alreadyInSceneUpdate) {
+        var order = data.Packet.ReadUShort();
+        if (UpdateOrder.IsStale(order, _lastOrder)) {
+            return;
+        }
+        _lastOrder = order;
         var length = data.Packet.ReadByte();
         for (var i = 0; i < length; i++) {
             var playing = data.Packet.ReadBool();
+            var starts = data.Packet.ReadUInt();
             if (!FollowsLoops() || i >= _clientSources.Length) {
                 continue;
             }
+
+            var previous = _lastReceivedStarts[i];
+            _lastReceivedStarts[i] = starts;
+            var wasReportedPlaying = _lastReceivedPlaying[i];
+            _lastReceivedPlaying[i] = playing;
 
             // Unity's null: a source destroyed since the copy was made (a pattern match would not see it, and the throw
             // would drop the rest of the entity's data)
@@ -102,7 +134,7 @@ internal class AudioLoopComponent : EntityComponent {
                 continue;
             }
 
-            if (playing && !source.isPlaying) {
+            if (LoopStarts.NeedsPlay(playing, source.isPlaying, previous, starts, wasReportedPlaying)) {
                 source.Play();
             } else if (!playing && source.isPlaying) {
                 source.Stop();

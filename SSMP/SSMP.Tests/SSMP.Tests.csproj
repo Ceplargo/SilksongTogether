@@ -19,6 +19,7 @@
         <Compile Include="..\SSMP\Game\Client\Save\Complex\ComplexFieldSpecs.cs" Link="Linked\ComplexFieldSpecs.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\Complex\ProjectionOps.cs" Link="Linked\ProjectionOps.cs"/>
         <Compile Include="..\SSMP\Game\Server\UsernameRules.cs" Link="Linked\UsernameRules.cs"/>
+        <Compile Include="..\SSMP\Game\Client\PersonalCocoon.cs" Link="Linked\PersonalCocoon.cs"/>
         <Compile Include="..\SSMP\Ui\Component\LobbyVisibility.cs" Link="Linked\LobbyVisibility.cs"/>
         <Compile Include="..\SSMP\Networking\Matchmaking\Protocol\MmsModels.cs" Link="Linked\MmsModels.cs"/>
         <Compile Include="..\SSMP\Game\Server\BugMark.cs" Link="Linked\BugMark.cs"/>
@@ -30,16 +31,35 @@
         <Compile Include="..\SSMP\Game\Client\Entity\Action\PickRules.cs" Link="Linked\PickRules.cs"/>
         <Compile Include="..\SSMP\Networking\Packet\Pieces.cs" Link="Linked\Pieces.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\UpdateOrder.cs" Link="Linked\UpdateOrder.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\ThrownCopies.cs" Link="Linked\ThrownCopies.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\PartBits.cs" Link="Linked\PartBits.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\ChildActivation.cs" Link="Linked\ChildActivation.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\CatchPoint.cs" Link="Linked\CatchPoint.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Action\DelayedSwitch.cs" Link="Linked\DelayedSwitch.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\SentSpeed.cs" Link="Linked\SentSpeed.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\RunOn.cs" Link="Linked\RunOn.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\StageDamage.cs" Link="Linked\StageDamage.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Action\ScaleFollow.cs" Link="Linked\ScaleFollow.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Action\ScaleTween.cs" Link="Linked\ScaleTween.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\DamagePairs.cs" Link="Linked\DamagePairs.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\ServitorCorpse.cs" Link="Linked\ServitorCorpse.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\FlockCopies.cs" Link="Linked\FlockCopies.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\EntityType.cs" Link="Linked\EntityType.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\NativeStartup.cs" Link="Linked\NativeStartup.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\EntityParenting.cs" Link="Linked\EntityParenting.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\ScaleRefresh.cs" Link="Linked\ScaleRefresh.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\DeathOrder.cs" Link="Linked\DeathOrder.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\LoopStarts.cs" Link="Linked\LoopStarts.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\EntitySpawnRules.cs" Link="Linked\EntitySpawnRules.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\SpecialDeath.cs" Link="Linked\SpecialDeath.cs"/>
+        <None Include="..\SSMP\Resource\entity-registry.json" Link="entity-registry.json" CopyToOutputDirectory="PreserveNewest"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\MissedHits.cs" Link="Linked\MissedHits.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\RemoteStuns.cs" Link="Linked\RemoteStuns.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Action\PlainSpawns.cs" Link="Linked\PlainSpawns.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\HitKind.cs" Link="Linked\HitKind.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\ChildPlaces.cs" Link="Linked\ChildPlaces.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\FlungThrows.cs" Link="Linked\FlungThrows.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\BodyBox.cs" Link="Linked\BodyBox.cs"/>
     </ItemGroup>
 
     <ItemGroup>

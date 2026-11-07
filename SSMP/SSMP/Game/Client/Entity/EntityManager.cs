@@ -34,6 +34,8 @@ internal class EntityManager {
     /// </summary>
     private readonly Dictionary<ushort, Entity> _entities;
 
+    private readonly List<EntitySpawnDetails> _startupSpawns = [];
+
     /// <summary>
     /// Latest buffered unreliable update for each entity, waiting on entity registration or role assignment.
     /// </summary>
@@ -131,6 +133,7 @@ internal class EntityManager {
         IsSceneHost = true;
         foreach (var entity in _entities.Values) entity.InitializeHost(sceneHostEpoch);
         _sceneRoleDetermined = true;
+        ResolveStartupSpawns();
         DrainPendingUpdates();
         RaiseSceneHostChanged();
     }
@@ -143,6 +146,7 @@ internal class EntityManager {
         IsSceneHost = false;
         foreach (var entity in _entities.Values) entity.InitializeClient(sceneHostEpoch);
         _sceneRoleDetermined = true;
+        ResolveStartupSpawns();
         DrainPendingUpdates();
         RaiseSceneHostChanged();
     }
@@ -153,7 +157,16 @@ internal class EntityManager {
     public void BecomeSceneHost(uint sceneHostEpoch = 0) {
         Logger.Info($"Becoming scene host (epoch {sceneHostEpoch})");
         IsSceneHost = true;
-        foreach (var entity in _entities.Values) entity.MakeHost(sceneHostEpoch);
+        foreach (var (id, entity) in _entities) {
+            // (coop) one entity's throw must not stop the takeover of the rest (and the retarget and the event below)
+            try {
+                entity.MakeHost(sceneHostEpoch);
+            } catch (Exception e) {
+                var name = entity.Object.Client != null ? entity.Object.Client.name
+                    : entity.Object.Host != null ? entity.Object.Host.name : "both gone";
+                Logger.Error($"Entity {id} ({entity.Type}, '{name}') could not be made host: {e.GetType().Name}: {e.Message}");
+            }
+        }
 
         // Immediately refresh targeting fields for all active enemies
         GamePatcher.ForceImmediateRetarget();
@@ -258,9 +271,15 @@ internal class EntityManager {
             return false;
         }
 
+        // Death effects must read visibility before this same packet hides the copy.
+        var hideAfterDeath = !IsSceneHost && update.UpdateTypes.Contains(EntityUpdateType.Active) &&
+                             update.UpdateTypes.Contains(EntityUpdateType.Data) &&
+                             DeathOrder.FinishesDeathBeforeHide(update.IsActive,
+                                 update.GenericData.Any(data => data.Type == EntityComponentType.Death));
+
         // Active state and host FSM are driven by the scene host; clients are consumers only.
         if (!IsSceneHost) {
-            if (update.UpdateTypes.Contains(EntityUpdateType.Active))
+            if (update.UpdateTypes.Contains(EntityUpdateType.Active) && !hideAfterDeath)
                 entity.UpdateIsActive(update.IsActive);
 
             if (update.UpdateTypes.Contains(EntityUpdateType.HostFsm))
@@ -269,6 +288,9 @@ internal class EntityManager {
 
         if (update.UpdateTypes.Contains(EntityUpdateType.Data))
             entity.UpdateData(update.GenericData, alreadyInSceneUpdate);
+
+        if (hideAfterDeath)
+            entity.UpdateIsActive(false);
 
         return true;
     }
@@ -345,6 +367,9 @@ internal class EntityManager {
             Object.FindObjectsOfType<BigCentipede>(true).Select(c => c.gameObject),
             Object.FindObjectsOfType<CameraLockArea>(true).Select(c => c.gameObject),
             Object.FindObjectsOfType<DreamPlatform>(true).Select(c => c.gameObject),
+            FlockCopies.TracksFlockCopies()
+                ? Object.FindObjectsOfType<FlockFlyer>(true).Select(c => c.gameObject)
+                : Enumerable.Empty<GameObject>(),
         }.SelectMany(x => x);
 
         return fromDeathEffects
@@ -393,8 +418,13 @@ internal class EntityManager {
         // An entity spawn the other games cannot build stays a copy of the FSM action that spawned it, so they still
         // see it. A projectile whose name contains its enemy's ("Trobbio Bomb") matches the enemy's registry entry,
         // and as an entity spawn it failed in their games, so they saw nothing
-        if (EntityRegistry.TryGetEntry(details.GameObject, out var spawnedEntry) && !EntitySpawner.CanSpawn(spawnedEntry.Type)) {
-            return false;
+        if (EntityRegistry.TryGetEntry(details.GameObject, out var spawnedEntry)) {
+            if (!EntitySpawner.CanSpawn(spawnedEntry.Type)) return false;
+            if (EntitySpawnRules.WaitsForSceneRole(spawnedEntry.Type, _sceneRoleDetermined)) {
+                _startupSpawns.Add(details);
+                Logger.Debug($"Holding native startup spawn: {details.GameObject.name}");
+                return true;
+            }
         }
 
         var processor = new EntityProcessor {
@@ -436,6 +466,15 @@ internal class EntityManager {
         return true;
     }
 
+    private void ResolveStartupSpawns() {
+        foreach (var spawn in _startupSpawns) {
+            if (spawn.GameObject == null) continue;
+            if (IsSceneHost) OnGameObjectSpawned(spawn);
+            else Object.Destroy(spawn.GameObject);
+        }
+        _startupSpawns.Clear();
+    }
+
     /// <summary>
     /// Replays buffered updates for entities that are now registered and whose scene role is known.
     /// Updates that still can't be applied remain owned by their respective pending store.
@@ -462,6 +501,7 @@ internal class EntityManager {
     /// Clears all the registered entities, and resets static components.
     /// </summary>
     private void ClearEntities() {
+        _startupSpawns.Clear();
         foreach (var entity in _entities.Values) entity.Destroy();
         _entities.Clear();
 

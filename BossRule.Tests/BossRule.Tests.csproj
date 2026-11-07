@@ -9,6 +9,7 @@
     <!-- BossRule's Unity-free files, compiled here without the game. -->
     <ItemGroup>
         <Compile Include="..\BossRule\WaitRule.cs" Link="WaitRule.cs"/>
+        <Compile Include="..\BossRule\ReadyWait.cs" Link="ReadyWait.cs"/>
         <Compile Include="..\BossRule\BossCatalog.cs" Link="BossCatalog.cs"/>
         <Compile Include="..\BossRule\FightTracker.cs" Link="FightTracker.cs"/>
         <Compile Include="..\BossRule\BossScaling.cs" Link="BossScaling.cs"/>
@@ -19,6 +20,7 @@
         <Compile Include="..\BossRule\RiseWatch.cs" Link="RiseWatch.cs"/>
         <Compile Include="..\BossRule\EarlyRises.cs" Link="EarlyRises.cs"/>
         <Compile Include="..\BossRule\MultiHitPath.cs" Link="MultiHitPath.cs"/>
+        <Compile Include="..\BossRule\LateCatches.cs" Link="LateCatches.cs"/>
         <Compile Include="..\BossRule\ArenaEnd.cs" Link="ArenaEnd.cs"/>
         <Compile Include="..\BossRule\RoomCatalog.cs" Link="RoomCatalog.cs"/>
     </ItemGroup>

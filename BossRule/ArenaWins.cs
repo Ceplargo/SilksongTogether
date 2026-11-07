@@ -110,6 +110,16 @@ internal static class ArenaWins {
     /// (the round's review).
     /// </summary>
     private static IEnumerator Rest(BattleScene battle) {
+        // (coop) as the game's own end: its fanfare 1 s after the win, then its pause (BattleScene.EndBattle); the
+        // other player heard no battle-clear fanfare (boss round six's review; bosses Task 11 Step 3)
+        yield return new WaitForSeconds(1f);
+        if (battle == null) yield break;
+        if (PlaysFanfare() && battle.battleEndClip != null) {
+            var fanfare = GameManager.instance.AudioManager.FanfareEnemyBattleClear;
+            fanfare.clip = battle.battleEndClip;
+            fanfare.Play();
+        }
+
         yield return new WaitForSeconds(battle.battleEndPause);
         if (battle == null) yield break;
         if (battle.camLocks != null && !battle.dontDisableCamlocksOnEnd) battle.camLocks.SetActive(false);
@@ -126,6 +136,10 @@ internal static class ArenaWins {
         if (battle.snapshotEnd != null) battle.snapshotEnd.TransitionTo(2f);
         Debug.Log($"[BossRule] The arena {PathOf(battle.transform)}'s end ran here after its pause");
     }
+
+    /// <summary>Open's rest plays the arena's fanfare. Not inlined: arena_fanfare's twin skips it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool PlaysFanfare() => true;
 
     private static void NewRoom(string? room) {
         if (room == _room) return;

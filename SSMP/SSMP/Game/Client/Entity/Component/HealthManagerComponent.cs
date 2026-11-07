@@ -24,6 +24,9 @@ internal class HealthManagerComponent : EntityComponent {
     /// </summary>
     private readonly HostClientPair<HealthManager> _healthManager;
 
+    /// <summary>Whether this kind's copy follows its scripted death (SpecialDeath.KindFollows).</summary>
+    private readonly bool _followsScriptedDeath;
+
     /// <summary>
     /// (coop) Each loaded component by its original's and its copy's health manager (instance ids), for GamePatcher's
     /// hit hooks.
@@ -37,6 +40,11 @@ internal class HealthManagerComponent : EntityComponent {
     /// the next, so the scene host's game plays that landed hit with the stun it had here.
     /// </summary>
     private float _pendingStun;
+
+    /// <summary>(coop) This game's own last hit on the enemy and its frame, sent with the drop it made (HitKind).</summary>
+    private int _pendingKind;
+
+    private int _pendingKindFrame = -10;
 
     /// <summary>
     /// Host death effects used to capture the emitted corpse snapshot.
@@ -130,9 +138,11 @@ internal class HealthManagerComponent : EntityComponent {
         NetClient netClient,
         ushort entityId,
         HostClientPair<GameObject> gameObject,
-        HostClientPair<HealthManager> healthManager
+        HostClientPair<HealthManager> healthManager,
+        bool followsScriptedDeath = false
     ) : base(netClient, entityId, gameObject) {
         _healthManager = healthManager;
+        _followsScriptedDeath = followsScriptedDeath;
         _hostId = healthManager.Host.GetInstanceID();
         _clientId = healthManager.Client.GetInstanceID();
         ByManager[_hostId] = this;
@@ -323,8 +333,9 @@ internal class HealthManagerComponent : EntityComponent {
             data.Packet.Write(FollowsCorpse(_hostCorpse.name) ? (byte) (TrackCorpse?.Invoke(_hostCorpse) ?? 0) : (byte) 0);
         }
 
-        // Whether the call killed it (a special death only takes a hit), so the copy's outcome is the same
-        data.Packet.Write(self.isDead);
+        // A scripted death can mark it dead while its native animation still runs.
+        data.Packet.Write(SpecialDeath.UsesRegularPath(self.isDead, self.hasSpecialDeath, overrideSpecialDeath,
+            _followsScriptedDeath));
 
         _hostCorpse = null;
 
@@ -382,6 +393,7 @@ internal class HealthManagerComponent : EntityComponent {
             hpData.Packet.Write(newHp);
             hpData.Packet.Write(_currentHealthEpoch);
             hpData.Packet.Write(_pendingStun);
+            hpData.Packet.Write(newHp < previousHp ? HitKind.ForDrop(_pendingKind, _pendingKindFrame, Time.frameCount) : HitKind.None);
 
             SendData(hpData);
             if (LogsHealth) {
@@ -390,6 +402,7 @@ internal class HealthManagerComponent : EntityComponent {
             }
 
             _pendingStun = 0f;
+            _pendingKind = HitKind.None;
         }
 
         var newInvincible = _healthManager.Host.IsInvincible;
@@ -466,7 +479,7 @@ internal class HealthManagerComponent : EntityComponent {
                     corpseNumber = data.Packet.ReadByte();
                 }
 
-                var died = data.Packet.ReadBool();
+                var regularDeath = data.Packet.ReadBool();
 
                 // Set a boolean to indicate that the client health manager is allowed to execute the Die method
                 _allowDeath = true;
@@ -476,7 +489,7 @@ internal class HealthManagerComponent : EntityComponent {
                 // that missed the SetSpecialDeath of a fight already on (it joined late, or a packet was lost)
                 var client = _healthManager.Client;
                 var special = client.hasSpecialDeath;
-                client.hasSpecialDeath = !died;
+                client.hasSpecialDeath = !regularDeath;
                 client.Die(attackDirection, attackType, ignoreEvasion);
                 if (!client.isDead) client.hasSpecialDeath = special;
 
@@ -525,6 +538,7 @@ internal class HealthManagerComponent : EntityComponent {
         var newHp = data.Packet.ReadInt();
         var healthEpoch = data.Packet.ReadUInt();
         var stun = data.Packet.ReadFloat();
+        var kind = data.Packet.ReadInt();
 
         if (alreadyInSceneUpdate) {
             ResetHealthOrderingForEpoch(healthEpoch);
@@ -554,13 +568,13 @@ internal class HealthManagerComponent : EntityComponent {
             var change = newHp - previousHp;
             if (!isControlled && change < 0 && _healthManager.Host != null) {
                 // (coop) another player's hit landed in its game, with that stun: played here (see MissedHits)
-                MissedHits.For(_healthManager.Host.GetInstanceID()).Landed(Time.unscaledTime, stun);
+                MissedHits.For(_healthManager.Host.GetInstanceID()).Landed(Time.unscaledTime, stun, kind);
             } else if (isControlled && change < 0 && _healthManager.Client != null && PlaysHostHits()) {
                 // (coop) B's mirror: a hit that landed in the scene host's game (its own, or another player's it
                 // played), shown here once, with no stun (the scene host's game runs the enemy); the copied swings no
                 // longer show it, where the copy of the enemy trailed or two copies of a swing doubled (the Bone Flyer
                 // Giant: 16 hit sounds for the host's 13 hits; Lace: one of 15 missing)
-                MissedHits.For(_healthManager.Client.GetInstanceID()).Landed(Time.unscaledTime, 0f);
+                MissedHits.For(_healthManager.Client.GetInstanceID()).Landed(Time.unscaledTime, 0f, kind);
             }
 
             var before = GetCurrentHp();
@@ -587,16 +601,20 @@ internal class HealthManagerComponent : EntityComponent {
     /// 0.3.14 gate's boss_hits).
     /// </summary>
     private static void PlayMissedHits(HealthManager healthManager) {
-        var due = MissedHits.For(healthManager.GetInstanceID()).Due(Time.unscaledTime, GamePatcher.OnlyLandedHits());
+        var due = MissedHits.For(healthManager.GetInstanceID()).DueHits(Time.unscaledTime, GamePatcher.OnlyLandedHits());
         for (var i = 0; i < due.Count && PlaysMissedHits() && healthManager.hp > 0; i++) {
+            // (coop) the drop's own kind of hit (HitKind); none for a drop no hit made: it showed no hit where it came
+            var (attack, element, effects) = HitKind.Unpack(due[i].Kind);
+            var played = HitKind.Plays();
+            if (played && !HitKind.IsHit(due[i].Kind)) continue;
             var hp = healthManager.hp;
             var source = NearestRemotePlayer(healthManager.transform.position);
             healthManager.Hit(new HitInstance {
                 Source = source,
-                AttackType = AttackTypes.Nail,
-                NailElement = NailElements.None,
+                AttackType = played ? (AttackTypes) attack : AttackTypes.Nail,
+                NailElement = played ? (NailElements) element : NailElements.None,
                 DamageDealt = 1,
-                StunDamage = due[i],
+                StunDamage = due[i].Stun,
                 // the hit's way, from the player: one standing to her right hits leftward
                 Direction = source != null && source.transform.position.x > healthManager.transform.position.x
                     ? 180f
@@ -605,7 +623,7 @@ internal class HealthManagerComponent : EntityComponent {
                 Multiplier = 1f,
                 IsFirstHit = true,
                 NonLethal = true,
-                HitEffectsType = EnemyHitEffectsProfile.EffectsTypes.Full,
+                HitEffectsType = played ? (EnemyHitEffectsProfile.EffectsTypes) effects : EnemyHitEffectsProfile.EffectsTypes.Full,
                 SilkGeneration = HitSilkGeneration.None
             });
             healthManager.hp = hp;
@@ -633,6 +651,19 @@ internal class HealthManagerComponent : EntityComponent {
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static bool PlaysHostHits() => true;
+
+    /// <summary>
+    /// (coop) This game's own hit on that enemy (its own original in the scene host's game, its copy in another): its kind,
+    /// sent with the drop it makes (HitKind).
+    /// </summary>
+    internal static void NoteOwnHit(HealthManager manager, HitInstance hit) {
+        if (!ByManager.TryGetValue(manager.GetInstanceID(), out var c)) return;
+        var own = c._clientId == manager.GetInstanceID() && c.IsControlled ||
+                  c._hostId == manager.GetInstanceID() && !c.IsControlled;
+        if (!own) return;
+        c._pendingKind = HitKind.Pack((int) hit.AttackType, (int) hit.NailElement, (int) hit.HitEffectsType);
+        c._pendingKindFrame = Time.frameCount;
+    }
 
     /// <summary>(coop) A stun this game's own hit gave its copy of that enemy: sent with its next health change.</summary>
     internal static void AddOwnStun(HealthManager manager, float stun) {

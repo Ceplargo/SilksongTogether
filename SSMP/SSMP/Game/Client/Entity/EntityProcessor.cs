@@ -251,6 +251,10 @@ internal class EntityProcessor {
             hierarchy.Push(current);
         }
 
+        if (gameObject.GetComponent<FlockFlyer>() != null && FlockCopies.TracksFlockCopies()) {
+            return FlockCopies.Id(gameObject.scene.name, hierarchy.Select(t => (t.name, t.GetSiblingIndex())));
+        }
+
         AddString(gameObject.scene.name);
         while (hierarchy.Count > 0) {
             var current = hierarchy.Pop();

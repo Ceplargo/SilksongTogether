@@ -128,6 +128,11 @@ internal static class EntityInitializer {
             ConfigureClientParticles(gameObject);
         }
 
+        if (FlockCopies.TracksFlockCopies()) {
+            // Keep the receiver alive for its trigger/singing listeners, but let only the scene host fly or hide it.
+            foreach (var flock in gameObject.GetComponentsInChildren<FlockFlyer>(true)) flock.enabled = false;
+        }
+
         foreach (var type in ToRemoveTypes) {
             foreach (var component in gameObject.GetComponentsInChildren(type, true)) {
                 if (component == null) {

@@ -34,6 +34,13 @@ internal class DamageHeroComponent : EntityComponent {
     /// and the friend was hurt by touching her where the host's game showed her harmless).
     /// </summary>
     private readonly bool[] _lastEnabled;
+    private float _lastRefresh;
+
+    /// <summary>
+    /// (coop) Print only: this game's DamageHero data sent in all, and of it the sends only the 0.05 s refresh made (no
+    /// change), with their bytes; read by a probe's getstatic to size the refresh's network cost.
+    /// </summary>
+    internal static long Sends, Bytes, RefreshOnlySends, RefreshOnlyBytes;
 
     public DamageHeroComponent(
         NetClient netClient,
@@ -50,6 +57,19 @@ internal class DamageHeroComponent : EntityComponent {
             damageHero != null && damageHero.gameObject != null && damageHero.gameObject.activeSelf
         ).ToArray();
         _lastEnabled = _hostDamageHeroes.Select(damageHero => damageHero != null && damageHero.enabled).ToArray();
+    }
+
+    internal bool OwnsActivation(GameObject? target) {
+        if (target == null || target == GameObject.Host) {
+            return false;
+        }
+        for (var i = 0; i < _hostDamageHeroes.Length && i < _clientDamageHeroes.Length; i++) {
+            if (_hostDamageHeroes[i] != null && _hostDamageHeroes[i].gameObject == target &&
+                _clientDamageHeroes[i] != null && _clientDamageHeroes[i].gameObject != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>
@@ -85,9 +105,11 @@ internal class DamageHeroComponent : EntityComponent {
             changed = true;
         }
 
-        if (!changed) {
+        var refresh = DamagePairs.RefreshDue(Time.unscaledTime, _lastRefresh);
+        if (!changed && !refresh) {
             return;
         }
+        if (refresh) _lastRefresh = Time.unscaledTime;
 
         var data = new EntityNetworkData {
             Type = EntityComponentType.DamageHero
@@ -97,6 +119,13 @@ internal class DamageHeroComponent : EntityComponent {
             data.Packet.Write((byte) (damageHero != null ? damageHero.damageDealt : 0));
             data.Packet.Write(damageHero != null && damageHero.gameObject != null && damageHero.gameObject.activeSelf);
             data.Packet.Write(damageHero != null && (SyncsEnabled() ? damageHero.enabled : true));
+        }
+
+        Sends++;
+        Bytes += data.Packet.Length;
+        if (!changed) {
+            RefreshOnlySends++;
+            RefreshOnlyBytes += data.Packet.Length;
         }
 
         SendData(data);
@@ -116,14 +145,18 @@ internal class DamageHeroComponent : EntityComponent {
             if (i < _hostDamageHeroes.Length && _hostDamageHeroes[i] != null &&
                 _hostDamageHeroes[i].gameObject != null) {
                 _hostDamageHeroes[i].damageDealt = damageDealt;
-                _hostDamageHeroes[i].gameObject.SetActive(active);
+                if (DamagePairs.CopiesActivation(_hostDamageHeroes[i].gameObject == GameObject.Host)) {
+                    _hostDamageHeroes[i].gameObject.SetActive(active);
+                }
                 if (SyncsEnabled()) _hostDamageHeroes[i].enabled = enabled;
             }
 
             if (i < _clientDamageHeroes.Length && _clientDamageHeroes[i] != null &&
                 _clientDamageHeroes[i].gameObject != null) {
                 _clientDamageHeroes[i].damageDealt = damageDealt;
-                _clientDamageHeroes[i].gameObject.SetActive(active);
+                if (DamagePairs.CopiesActivation(_clientDamageHeroes[i].gameObject == GameObject.Client)) {
+                    _clientDamageHeroes[i].gameObject.SetActive(active);
+                }
                 if (SyncsEnabled()) _clientDamageHeroes[i].enabled = enabled;
             }
         }

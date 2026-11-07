@@ -64,6 +64,8 @@ internal class Entity {
     /// Whether the entity has a parent entity.
     /// </summary>
     private readonly bool _hasParent;
+    private readonly bool _nativeFlock;
+    private readonly bool _uninterruptedStartup;
 
     /// <summary>
     /// The ID of the entity.
@@ -116,6 +118,9 @@ internal class Entity {
     private ThrownComponent? Thrown =>
         _components.TryGetValue(EntityComponentType.Thrown, out var component) ? component as ThrownComponent : null;
 
+    private FlockComponent? Flock =>
+        _components.TryGetValue(EntityComponentType.Flock, out var component) ? component as FlockComponent : null;
+
     /// <summary>
     /// Unique list of components that require periodic update calls on the host.
     /// </summary>
@@ -155,6 +160,7 @@ internal class Entity {
     /// The last scale of the entity.
     /// </summary>
     private Vector3 _lastScale;
+    private float _lastScaleRefresh;
 
     /// <summary>
     /// Whether the game object for the entity was last active.
@@ -165,6 +171,9 @@ internal class Entity {
     /// Whether to allow the client entity to animate itself.
     /// </summary>
     private bool _allowClientAnimation;
+    private uint _childAnimationEpoch;
+    private ushort _childAnimationOrder;
+    private int _lastChildAnimationOrder = -1;
 
     /// <summary>
     /// List of snapshots for each FSM of a host entity that contain latest values for state and FSM variables.
@@ -184,6 +193,8 @@ internal class Entity {
         Id = id;
 
         Type = type;
+        _nativeFlock = type == EntityType.Brushflit && FlockCopies.TracksFlockCopies();
+        _uninterruptedStartup = _nativeFlock || NativeStartup.KeepsHiveRunning(type);
 
         _isControlled = true;
 
@@ -324,7 +335,8 @@ internal class Entity {
             }
         }
 
-        Object.Host.SetActive(false);
+        // Pausing here rerolls flock presence and loses the hive's next-frame startup event.
+        if (!_uninterruptedStartup) Object.Host.SetActive(false);
         Object.Client.SetActive(false);
 
         // // Debug code that logs each action's OnEnter method call
@@ -377,10 +389,11 @@ internal class Entity {
     /// (coop) Whether a copy keeps a corpse of this name (KeptCorpses).
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static bool KeepsCorpse(string name) => KeptCorpses.Contains(name);
+    private static bool KeepsCorpse(string name) =>
+        KeptCorpses.Contains(name) || ServitorCorpse.KeepsServitorCorpse(name);
 
     private void DestroyManagedChildren(GameObject root) {
-        // A fight-ending corpse of the root's own (EnemyDeathEffects makes them as its children on Awake) stays
+        // Only an explicitly allowed corpse of this root (pre-instantiated by EnemyDeathEffects) stays.
         var corpses = root.GetComponent<EnemyDeathEffects>() is { } effects
             ? typeof(EnemyDeathEffects).GetField("instantiatedCorpses", BindingFlags.NonPublic | BindingFlags.Instance)
                 ?.GetValue(effects) as GameObject[] ?? []
@@ -487,7 +500,8 @@ internal class Entity {
                 _netClient,
                 Id,
                 Object,
-                healthManager
+                healthManager,
+                SpecialDeath.KindFollows(Type)
             );
             _components[EntityComponentType.Death] = hmComponent;
             _components[EntityComponentType.Health] = hmComponent;
@@ -601,6 +615,15 @@ internal class Entity {
             //addedComponentsString += " MeshRenderer";
         }
 
+        if (_nativeFlock) {
+            _components[EntityComponentType.Flock] = new FlockComponent(_netClient, Id, Object, () => {
+                var clip = _animator.Client.CurrentClip;
+                if (clip == null || _animator.Client.GetClipByName(clip.name) is not { } replacement) return;
+                _allowClientAnimation = true;
+                _animator.Client.PlayFromFrame(clip.name,
+                    System.Math.Min(_animator.Client.CurrentFrame, replacement.frames.Length - 1));
+            });
+        }
         EntityInitializer.RemoveClientTypes(Object.Client, Type);
 
         // Instantiate all types defined in the entity registry, which are passed to the constructor
@@ -713,11 +736,21 @@ internal class Entity {
     /// </summary>
     /// <param name="self">The FSM action instance that was entered.</param>
     private void OnActionEntered(FsmStateAction self) {
+        if (!_hookedActions.TryGetValue(self, out var hookedEntityAction)) return;
         if (_isControlled) {
+            // Uninterrupted native startup can create enemies before the room role is known.
+            if (_uninterruptedStartup && !_isSceneHostDetermined && self is CreateObject created) {
+                EntityFsmActions.CallEntitySpawnEvent(new EntitySpawnDetails {
+                    Type = EntitySpawnType.FsmAction, Action = created, GameObject = created.storeObject.Value
+                });
+            }
             return;
         }
-
-        if (!_hookedActions.TryGetValue(self, out var hookedEntityAction)) {
+        if (self is ActivateGameObject activation &&
+            _components.TryGetValue(EntityComponentType.DamageHero, out var component) &&
+            component is DamageHeroComponent damage &&
+            DamagePairs.UsesNativeActivation(activation.resetOnExit, activation.recursive.Value,
+                damage.OwnsActivation(activation.Fsm.GetOwnerDefaultTarget(activation.gameObject)))) {
             return;
         }
         //
@@ -776,6 +809,7 @@ internal class Entity {
             return;
         }
 
+        if (_uninterruptedStartup && !_isSceneHostDetermined) return;
         var hostObjectActive = Object.Host.activeSelf;
 
         if (_isControlled) {
@@ -817,8 +851,8 @@ internal class Entity {
 
         var transform = Object.Host.transform;
 
-        // Unity already tracks transform mutations; avoid re-reading and comparing position/scale on quiet frames.
-        if (transform.hasChanged) {
+        var refreshScale = ScaleRefresh.Due(Time.unscaledTime, _lastScaleRefresh);
+        if (transform.hasChanged || refreshScale) {
             var newPosition = _hasParent ? transform.localPosition : transform.position;
             if (newPosition != _lastPosition) {
                 _lastPosition = newPosition;
@@ -829,44 +863,17 @@ internal class Entity {
                 );
             }
 
-            const float epsilon = 0.0001f;
-
             var newScale = _hasParent ? transform.localScale : transform.lossyScale;
-            if (newScale != _lastScale) {
+            if (newScale != _lastScale || refreshScale) {
+                // Complete values survive a missed earlier size or turn, and later changes in the same packet.
                 var scaleData = new EntityUpdate.ScaleData {
-                    origin = true
+                    origin = true,
+                    x = true, y = true, z = true,
+                    xScale = newScale.x, yScale = newScale.y, zScale = newScale.z
                 };
-
-                if (newScale.x != _lastScale.x) {
-                    scaleData.x = true;
-                    scaleData.xScale = newScale.x;
-
-                    if (System.Math.Abs(newScale.x - _lastScale.x * -1) < epsilon) {
-                        scaleData.xFlipped = true;
-                    }
-                }
-
-                if (newScale.y != _lastScale.y) {
-                    scaleData.y = true;
-                    scaleData.yScale = newScale.y;
-
-                    if (System.Math.Abs(newScale.y - _lastScale.y * -1) < epsilon) {
-                        scaleData.yFlipped = true;
-                    }
-                }
-
-                if (newScale.z != _lastScale.z) {
-                    scaleData.z = true;
-                    scaleData.zScale = newScale.z;
-
-                    if (System.Math.Abs(newScale.z - _lastScale.z * -1) < epsilon) {
-                        scaleData.zFlipped = true;
-                    }
-                }
-
                 _netClient.UpdateManager.UpdateEntityScale(Id, scaleData);
-
                 _lastScale = newScale;
+                if (refreshScale) _lastScaleRefresh = Time.unscaledTime;
             }
 
             transform.hasChanged = false;
@@ -1069,11 +1076,7 @@ internal class Entity {
         }
 
         //Logger.Info($"Entity '{Object.Host.name}' sends animation: {clip.name}, {animationId}, {clip.wrapMode}");
-        _netClient.UpdateManager.UpdateEntityAnimation(
-            Id,
-            animationId,
-            (byte) clip.wrapMode
-        );
+        SendAnimation(animationId, (byte) clip.wrapMode);
     }
 
     /// <summary>
@@ -1136,7 +1139,8 @@ internal class Entity {
     /// Initializes the entity when the client user is the scene host.
     /// </summary>
     public void InitializeHost(uint sceneHostEpoch = 0) {
-        Object.Host.SetActive(_originalIsActive);
+        ResetChildAnimation(sceneHostEpoch);
+        if (!_uninterruptedStartup) Object.Host.SetActive(_originalIsActive);
 
         // Also update the last active variable to account for this potential change
         // Otherwise we might trigger the update sending of activity twice
@@ -1174,7 +1178,28 @@ internal class Entity {
     private void SendsCurrentClip() {
         var clip = _animator.Host != null ? _animator.Host.CurrentClip : null;
         if (clip == null || !_animationClipNameIds.TryGetValue(clip.name, out var animationId)) return;
-        _netClient.UpdateManager.UpdateEntityAnimation(Id, animationId, (byte) clip.wrapMode);
+        SendAnimation(animationId, (byte) clip.wrapMode);
+    }
+
+    private void SendAnimation(byte animationId, byte wrapMode) {
+        if (!EntityParenting.SendsChildAnimationReliably(_hasParent)) {
+            _netClient.UpdateManager.UpdateEntityAnimation(Id, animationId, wrapMode);
+            return;
+        }
+
+        // Parent FSM clips and child motion share one ordered path, so an old Idle cannot replace a newer turn.
+        var data = new EntityNetworkData { Type = EntityComponentType.ChildAnimation };
+        data.Packet.Write(_childAnimationEpoch);
+        data.Packet.Write(++_childAnimationOrder);
+        data.Packet.Write(animationId);
+        data.Packet.Write(wrapMode);
+        _netClient.UpdateManager.AddEntityData(Id, data);
+    }
+
+    private void ResetChildAnimation(uint epoch) {
+        _childAnimationEpoch = epoch;
+        _childAnimationOrder = 0;
+        _lastChildAnimationOrder = -1;
     }
 
     /// <summary>
@@ -1182,7 +1207,9 @@ internal class Entity {
     /// host has been determined.
     /// </summary>
     public void InitializeClient(uint sceneHostEpoch = 0) {
+        ResetChildAnimation(sceneHostEpoch);
         _isSceneHostDetermined = true;
+        if (_uninterruptedStartup) Object.Host.SetActive(false);
 
         // Deregister the hook for updating the active value of the host object
         _activateGameObjectHook?.Dispose();
@@ -1193,10 +1220,15 @@ internal class Entity {
         }
     }
 
+    /// <summary>Whether a copy whose original is gone is hidden at a takeover. Not inlined: host_takeover's twin skips it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool HidesGoneOriginals() => true;
+
     /// <summary>
     /// Makes the entity a host entity if the client user became the scene host.
     /// </summary>
     public void MakeHost(uint sceneHostEpoch) {
+        ResetChildAnimation(sceneHostEpoch);
         //Logger.Info($"Making entity ({Id}, {Type}) a host entity");
 
         // If the client object is null, we don't have to care about doing anything for the host object anymore
@@ -1213,6 +1245,20 @@ internal class Entity {
             }
 
             //Logger.Debug("  Client object null, enabling host object and returning");
+            return;
+        }
+
+        // (coop) The original is gone here (its own room destroyed it while this game followed): this game has nothing
+        // to drive, so its copy is hidden rather than left frozen; its MakeHost threw on Object.Host.transform and
+        // stopped the whole takeover (the final plan2, 2026-11-05: Tut_03 after the host left, NOTES 347)
+        if (Object.Host == null && HidesGoneOriginals()) {
+            Logger.Info($"Entity {Id} ({Type}, '{Object.Client.name}'): its original is gone at the takeover; its copy hidden");
+            Object.Client.SetActive(false);
+            _isControlled = false;
+            foreach (var component in _components.Values) {
+                component.IsControlled = false;
+            }
+
             return;
         }
 
@@ -1372,8 +1418,10 @@ internal class Entity {
         }
 
         var clientActive = Object.Client.activeSelf;
+        var flockClip = _animator.Client?.CurrentClip?.name ?? "Idle";
         Object.Client.SetActive(false);
-        Object.Host.SetActive(clientActive);
+        if (Flock is { } flock) flock.ActivateHost(clientActive, flockClip);
+        else Object.Host.SetActive(clientActive);
 
         foreach (var fsmIndex in enterAgain ?? []) {
             try {
@@ -1416,6 +1464,12 @@ internal class Entity {
             position.Y,
             _hasParent ? Object.Host.transform.localPosition.z : Object.Host.transform.position.z
         );
+
+        // Child updates are relative to their parent; the predictor consumes world coordinates.
+        if (_hasParent) {
+            Object.Client.transform.localPosition = unityPos;
+            return;
+        }
 
         var positionInterpolation = Object.Client.GetComponent<PredictiveInterpolation>();
         if (positionInterpolation == null) {
@@ -1580,6 +1634,20 @@ internal class Entity {
     /// <param name="alreadyInSceneUpdate">Whether this data is from an already in scene update.</param>
     public void UpdateData(List<EntityNetworkData> entityNetworkData, bool alreadyInSceneUpdate) {
         foreach (var data in entityNetworkData) {
+            if (data.Type == EntityComponentType.ChildAnimation) {
+                if (!_isControlled || !_hasParent || data.Packet.Length != 8) continue;
+                var epoch = data.Packet.ReadUInt();
+                var order = data.Packet.ReadUShort();
+                if (EntityParenting.IsOldChildAnimation(epoch, order, _childAnimationEpoch, _lastChildAnimationOrder))
+                    continue;
+                _childAnimationEpoch = epoch;
+                _lastChildAnimationOrder = order;
+                var animationId = data.Packet.ReadByte();
+                var wrapMode = (tk2dSpriteAnimationClip.WrapMode) data.Packet.ReadByte();
+                UpdateAnimation(animationId, wrapMode, alreadyInSceneUpdate);
+                continue;
+            }
+
             if (data.Type == EntityComponentType.Fsm) {
                 PlayMakerFSM fsm;
 

@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using HutongGames.PlayMaker;
 using HutongGames.PlayMaker.Actions;
+using SSMP.Game.Client.Entity.Component;
 using SSMP.Networking.Packet.Data;
 using SSMP.Util;
 using UnityEngine;
@@ -271,8 +272,17 @@ internal static partial class EntityFsmActions {
     /// Builds network data from the FSM action: the scene host's pick from its table, when the action set it at once (a
     /// delayed set comes after this is sent, and is not copied).
     /// </summary>
-    private static bool GetNetworkDataFromAction(EntityNetworkData data, SetRandomAudioClipFromTable action) =>
-        action.delay.Value == 0f && WritePick(data, action.Table.Value as RandomAudioClipTable);
+    private static bool GetNetworkDataFromAction(EntityNetworkData data, SetRandomAudioClipFromTable action) {
+        if (action.delay.Value != 0f || !WritePick(data, action.Table.Value as RandomAudioClipTable)) return false;
+        // (coop) its at-once play is replayed with it: not again by the loop follow's restart count (LoopStarts.SentAction,
+        // as SetAudioClip's; Lace's Dormant hum played twice at once in the friend's game, enemy_plays, NOTES 321)
+        if (action.AutoPlay.Value && action.AudioSource.Value is { } holder &&
+            holder.TryGetComponent<AudioSource>(out var source)) {
+            LoopStarts.SentAction(source);
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Applies network data to the FSM action: the source gets the scene host's clip from the table (its own pick when not
@@ -428,6 +438,11 @@ internal static partial class EntityFsmActions {
 
     /// <summary>Builds network data from the FSM action.</summary>
     private static bool GetNetworkDataFromAction(EntityNetworkData data, SetAudioClip action) {
+        var target = action.Fsm.GetOwnerDefaultTarget(action.gameObject);
+        if (action.autoPlay?.Value == true && target != null &&
+            target.TryGetComponent<AudioSource>(out var source) && source.loop) {
+            LoopStarts.SentAction(source);
+        }
         return true;
     }
 
