@@ -19,7 +19,7 @@ public class BossRulePlugin : BaseUnityPlugin {
     /// server refuses a friend whose version differs, since synced values travel as positions in a list built into
     /// the mod.
     /// </summary>
-    internal const string Version = "0.3.19";
+    internal const string Version = "0.3.20";
 
     private BossRuleClientAddon? _client;
 

@@ -6,6 +6,7 @@ using HutongGames.PlayMaker.Actions;
 using SSMP.Networking.Packet.Data;
 using SSMP.Util;
 using UnityEngine;
+using Logger = SSMP.Logging.Logger;
 
 // ReSharper disable UnusedMember.Local
 // ReSharper disable UnusedParameter.Local
@@ -30,9 +31,29 @@ internal static partial class EntityFsmActions {
 
     #region StartRoarEmitter
 
-    /// <summary>Builds network data from the FSM action.</summary>
-    private static bool GetNetworkDataFromAction(EntityNetworkData data, StartRoarEmitter action) =>
-        !action.noVisualEffect.Value;
+    /// <summary>
+    /// Builds network data from the FSM action: for its rings, or (coop) for its lock alone; nothing when the game's own
+    /// roar found no spawn point and did nothing (a Song Golem whose Init had not found its Roar Point: the scene host's
+    /// hero stayed free, the copy's roar locked the other's, 0.3.20's roar_lock).
+    /// </summary>
+    private static bool GetNetworkDataFromAction(EntityNetworkData data, StartRoarEmitter action) {
+        if (action.Fsm?.GetOwnerDefaultTarget(action.spawnPoint) == null ||
+            !RoarLock.Sends(action.noVisualEffect.Value, action.stunHero.Value)) {
+            return false;
+        }
+
+        // (coop) whether the scene host's own hero took the lock, read after the game's own action ran: the copy locks
+        // only then, so it follows the game's own conditions (the Crawfather's Roar from his background idle left the
+        // scene host's hero free while the copy's locked the other's, 0.3.20's roar_lock)
+        data.Packet.Write(RoarLock.HostLocked(action.stunHero.Value, action.delay.Value >= 0.001f, HeroInRoarLock()));
+        return true;
+    }
+
+    /// <summary>(coop) Whether this game's hero is in a roar lock (its Roar and Wound States out of Idle).</summary>
+    private static bool HeroInRoarLock() =>
+        global::HeroController.SilentInstance is { } hero &&
+        PlayMakerFSM.FindFsmOnGameObject(hero.gameObject, "Roar and Wound States") is { } roar &&
+        roar.ActiveStateName != "Idle";
 
     /// <summary>
     /// The ends of the lasting roars the copies started that nothing has ended yet, which a copied StopRoarEmitter runs
@@ -40,14 +61,21 @@ internal static partial class EntityFsmActions {
     /// </summary>
     private static readonly List<System.Action> PendingRoarEnds = new();
 
+    /// <summary>(coop) The roar locks this game's hero took from copies' roars that nothing has ended yet.</summary>
+    private static readonly List<System.Action> PendingRoarLocks = new();
+
     /// <summary>
     /// Applies network data to the FSM action: the roar's rings as the scene host's: a burst, or rings that go on
     /// ("START") until the scene host's state ends (for an action that stops on exit), a copied StopRoarEmitter, or the
     /// copy going (it left the room, or this game took it over), so no other room keeps them. A delayed roar comes only
-    /// while the state lasts, as the game's, and none from a copy already gone. The local hero is not stunned, since
-    /// the end of that stun would not come.
+    /// while the state lasts, as the game's, and none from a copy already gone. (coop) A stunning roar locks the local hero
+    /// as the game's own does (ROAR WOUND CANCEL, then its ROAR ENTER), and the lock ends with the roar's own end: the
+    /// scene host's state exit (stopOnExit), a copied StopRoarEmitter, or the copy going; if none comes, at
+    /// RoarLock.TimeoutS; only the latest lock's end frees the hero. Before, the local hero was not stunned, since that end was not followed: the other player's
+    /// Hornet moved through every boss's roar and never struck the intro pose (0.3.20's intro_pose).
     /// </summary>
     private static void ApplyNetworkDataFromAction(EntityNetworkData data, StartRoarEmitter action) {
+        var hostLocked = data == null || data.Packet.ReadBool();  // read first: written with every roar sent
         var cameras = global::GameManager.instance != null ? global::GameManager.instance.gameCams : null;
         var emitter = cameras != null
             ? cameras.transform.Find(action.isSmall.Value ? "Roar Wave Emitter Small" : "Roar Wave Emitter")
@@ -55,6 +83,11 @@ internal static partial class EntityFsmActions {
         var spawnPoint = action.Fsm?.GetOwnerDefaultTarget(action.spawnPoint);
         if (emitter == null || spawnPoint == null) {
             return;
+        }
+
+        var locks = action.stunHero.Value && hostLocked && RoarLock.Follows();
+        if (locks && global::HeroController.SilentInstance is { } wounded) {
+            FSMUtility.SendEventToGameObject(wounded.gameObject, "ROAR WOUND CANCEL");
         }
 
         if (action.delay.Value < 0.001f) {
@@ -82,6 +115,14 @@ internal static partial class EntityFsmActions {
 
             var position = spawnPoint.transform.position;
             emitter.position = new Vector3(position.x, position.y, 0f);
+            if (locks) {
+                Lock();
+            }
+
+            if (action.noVisualEffect.Value) {
+                return;
+            }
+
             if (!Lasting(action)) {
                 FSMUtility.SendEventToGameObject(emitter.gameObject, "BURST");
                 return;
@@ -107,6 +148,45 @@ internal static partial class EntityFsmActions {
                 if (emitter != null) FSMUtility.SendEventToGameObject(emitter.gameObject, "END");
             }
         }
+
+        // (coop) The local hero locked as the game's own roar locks it, until the roar's own end or the timeout
+        void Lock() {
+            if (global::HeroController.SilentInstance is not { } hero) {
+                return;
+            }
+
+            var sent = RoarLock.EnterEvent(action.roarBurst.Value, action.forceThroughBind.Value);
+            FSMUtility.SendEventToGameObject(hero.gameObject, sent);
+            Logger.Info($"(coop) roar lock: {sent} from {action.Fsm?.GameObjectName} {action.State?.Name}");
+            var hold = new RoarLock(Time.unscaledTime);
+            PendingRoarLocks.Add(EndByRoar);
+            MonoBehaviourUtil.Instance.OnUpdateEvent += WatchLock;
+            if (action.stopOnExit) {
+                new ActionInState { Fsm = action.Fsm, StateName = action.State.Name, ExitAction = EndByRoar }.Register();
+            }
+
+            void WatchLock() {
+                if (CopyGone(action) ? hold.End() : hold.Tick(Time.unscaledTime)) {
+                    Exit(CopyGone(action) ? "the copy went" : $"the timeout ({RoarLock.TimeoutS:0} s)");
+                }
+            }
+
+            void EndByRoar() {
+                if (RoarLock.EndsWithRoar() && hold.End()) {
+                    Exit("the roar's end");
+                }
+            }
+
+            void Exit(string how) {
+                MonoBehaviourUtil.Instance.OnUpdateEvent -= WatchLock;
+                PendingRoarLocks.Remove(EndByRoar);
+                Logger.Info($"(coop) roar lock ended by {how}: {action.Fsm?.GameObjectName} {action.State?.Name}" +
+                            (hold.Frees ? "" : " (a later roar's lock holds the hero)"));
+                if (hold.Frees && global::HeroController.SilentInstance is { } h) {
+                    FSMUtility.SendEventToGameObject(h.gameObject, "ROAR EXIT");
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -127,7 +207,7 @@ internal static partial class EntityFsmActions {
     /// <summary>
     /// Applies network data to the FSM action: the lasting roars' rings end, as the scene host's did (both emitters, as
     /// the action does, and the copies' roars still waiting for an end; a delayed stop only while the state lasts, as the
-    /// game's; the local hero's roar stun is not the copy's to end).
+    /// game's); (coop) and the local hero's locks from copies' roars end, as the game's ROAR EXIT ends its own.
     /// </summary>
     private static void ApplyNetworkDataFromAction(EntityNetworkData data, StopRoarEmitter action) {
         if (action.delay.Value < 0.001f) {
@@ -148,6 +228,7 @@ internal static partial class EntityFsmActions {
 
         void Stop() {
             foreach (var end in PendingRoarEnds.ToArray()) end();
+            foreach (var end in PendingRoarLocks.ToArray()) end();
 
             var cameras = global::GameManager.instance != null ? global::GameManager.instance.gameCams : null;
             if (cameras == null) return;

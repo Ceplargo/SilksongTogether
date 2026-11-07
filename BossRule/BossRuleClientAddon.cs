@@ -105,6 +105,9 @@ internal class BossRuleClientAddon : ClientAddon {
         MultiHits.PlayerObject = name => clientApi.ClientManager.Players
             .FirstOrDefault(p => p.Username == name && p.IsInLocalScene)?.PlayerObject;
         ArenaWins.Send = (scene, state) => SendFollow(scene, "", state);
+        FreeStarts.Send = DoorBells.Send;  // to the room's other players, as the door bells go
+        TrapFollow.Send = (scene, state) => SendFollow(scene, "", state);  // any room, as arena wins go
+        PerformWake.Send = (scene, state) => SendFollow(scene, "", state);
         ArenaWins.SceneHost = MultiHits.SceneHost;
         ArenaWins.NotSceneHost = GroundBells.NotSceneHost;
         ArenaWins.CatalogRoom = scene => _bosses.Any(e => e.Scene == scene);
@@ -126,6 +129,22 @@ internal class BossRuleClientAddon : ClientAddon {
             // the scene host's game won an ordinary arena: this game's ends too
             if (packet.State.StartsWith(ArenaWins.Prefix)) {
                 ArenaWins.Received(packet.Scene, packet.State.Substring(ArenaWins.Prefix.Length));
+                return;
+            }
+
+            // another player freed the room's boss from its trap: this game's frees too, the scene host's as well
+            if (packet.State.StartsWith(FreeStarts.Prefix)) {
+                FreeStarts.Echo(packet.State.Substring(FreeStarts.Prefix.Length));
+                return;
+            }
+
+            // another player set off terrain there (a crumble, a boulder): this game's same object goes too
+            if (packet.State.StartsWith(TrapFollow.Prefix)) {
+                TrapFollow.Echo(packet.State.Substring(TrapFollow.Prefix.Length));
+                return;
+            }
+            if (packet.State.StartsWith(PerformWake.Prefix)) {
+                PerformWake.Echo(packet.State.Substring(PerformWake.Prefix.Length));
                 return;
             }
 
@@ -234,6 +253,9 @@ internal class BossRuleClientAddon : ClientAddon {
         GroundBells.Tick();
         MultiHits.Tick();
         ArenaWins.Tick();
+        if (_connected) FreeStarts.Tick();
+        if (_connected) TrapFollow.Tick();
+        if (_connected) PerformWake.Tick();
     }
 
     /// <summary>

@@ -37,6 +37,9 @@
         <Compile Include="..\SSMP\Game\Client\Entity\Component\CatchPoint.cs" Link="Linked\CatchPoint.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Action\DelayedSwitch.cs" Link="Linked\DelayedSwitch.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\SentSpeed.cs" Link="Linked\SentSpeed.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\SceneScan.cs" Link="Linked\SceneScan.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Action\ReplayedVelocity.cs" Link="Linked\ReplayedVelocity.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Action\RoarLock.cs" Link="Linked\RoarLock.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\RunOn.cs" Link="Linked\RunOn.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\StageDamage.cs" Link="Linked\StageDamage.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Action\ScaleFollow.cs" Link="Linked\ScaleFollow.cs"/>

@@ -353,22 +353,30 @@ internal class EntityManager {
     /// (Climber, Walker, BigCentipede, CameraLockArea, DreamPlatform).
     /// </summary>
     private static IEnumerable<GameObject> CollectEntityCandidates(Scene scene) {
-        var fromDeathEffects = Object.FindObjectsOfType<EnemyDeathEffects>()
+        // (coop) the room's own objects only: a scan of every loaded object grows with the game's GlobalPool (SceneScan)
+        var roots = SceneScan.SceneOnly() && scene.isLoaded ? scene.GetRootGameObjects() : null;
+
+        T[] All<T>(bool hidden) where T : UnityEngine.Component => roots == null
+            ? Object.FindObjectsOfType<T>(hidden)
+            : roots.SelectMany(r => r.GetComponentsInChildren<T>(true))
+                   .Where(c => hidden || c.gameObject.activeInHierarchy).ToArray();
+
+        var fromDeathEffects = All<EnemyDeathEffects>(false)
                                      .Where(e => e.gameObject.scene == scene)
                                      .SelectMany(ExpandDeathEffects);
 
-        var fromFsms = Object.FindObjectsOfType<PlayMakerFSM>(true)
+        var fromFsms = All<PlayMakerFSM>(true)
                              .Where(fsm => fsm.gameObject.scene == scene)
                              .Select(fsm => fsm.gameObject);
 
         var fromComponents = new[] {
-            Object.FindObjectsOfType<Climber>(true).Select(c => c.gameObject),
-            Object.FindObjectsOfType<Walker>(true).Select(c => c.gameObject),
-            Object.FindObjectsOfType<BigCentipede>(true).Select(c => c.gameObject),
-            Object.FindObjectsOfType<CameraLockArea>(true).Select(c => c.gameObject),
-            Object.FindObjectsOfType<DreamPlatform>(true).Select(c => c.gameObject),
+            All<Climber>(true).Select(c => c.gameObject),
+            All<Walker>(true).Select(c => c.gameObject),
+            All<BigCentipede>(true).Select(c => c.gameObject),
+            All<CameraLockArea>(true).Select(c => c.gameObject),
+            All<DreamPlatform>(true).Select(c => c.gameObject),
             FlockCopies.TracksFlockCopies()
-                ? Object.FindObjectsOfType<FlockFlyer>(true).Select(c => c.gameObject)
+                ? All<FlockFlyer>(true).Select(c => c.gameObject)
                 : Enumerable.Empty<GameObject>(),
         }.SelectMany(x => x);
 

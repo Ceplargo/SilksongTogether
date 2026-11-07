@@ -1703,6 +1703,7 @@ internal class Entity {
                 //);
 
                 EntityFsmActions.ApplyNetworkDataFromAction(data, action);
+                KeepCopyStill();
 
                 // The scene host's number for what it spawned (see ThrownComponent)
                 if (action is SpawnObjectFromGlobalPool spawn) {
@@ -1727,6 +1728,17 @@ internal class Entity {
     /// <summary>
     /// Update the FSMs of the host entity to prepare for host transfer or disconnects.
     /// </summary>
+    /// <summary>
+    /// (coop) After a replayed action: the copy's own body keeps no velocity when it is kinematic and placed each frame
+    /// by PredictiveInterpolation (<see cref="ReplayedVelocity"/>).
+    /// </summary>
+    private void KeepCopyStill() {
+        if (Object.Client == null || !Object.Client.TryGetComponent<Rigidbody2D>(out var body)) return;
+        if (ReplayedVelocity.Drops(body.isKinematic, Object.Client.TryGetComponent<PredictiveInterpolation>(out _))) {
+            body.velocity = Vector2.zero;
+        }
+    }
+
     /// <param name="hostFsmData">Dictionary mapping FSM index to data.</param>
     public void UpdateHostFsmData(Dictionary<byte, EntityHostFsmData> hostFsmData) {
         foreach (var (fsmIndex, data) in hostFsmData) {

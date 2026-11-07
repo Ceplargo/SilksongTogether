@@ -23,6 +23,9 @@
         <Compile Include="..\BossRule\LateCatches.cs" Link="LateCatches.cs"/>
         <Compile Include="..\BossRule\ArenaEnd.cs" Link="ArenaEnd.cs"/>
         <Compile Include="..\BossRule\RoomCatalog.cs" Link="RoomCatalog.cs"/>
+        <Compile Include="..\BossRule\FreeTraps.cs" Link="FreeTraps.cs"/>
+        <Compile Include="..\BossRule\LocalTraps.cs" Link="LocalTraps.cs"/>
+        <Compile Include="..\BossRule\PerformWakes.cs" Link="PerformWakes.cs"/>
     </ItemGroup>
 
     <ItemGroup>
