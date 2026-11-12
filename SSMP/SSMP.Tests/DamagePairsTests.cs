@@ -96,4 +96,17 @@ public class DamagePairsTests {
         Assert.Equal(["the original's Pin Projectile has none on the clone", "the clone's Extra has none on the original"],
             DamagePairs.Unmatched(original, clone, DamagePairs.Align(original, clone)));
     }
+
+    [Fact]
+    public void A_copys_sound_sources_pair_by_path_and_one_with_no_partner_stays_silent() {
+        // 0.3.20's Dock Worker: his copy holds one more AudioSource than the original, so SSMP made no loop follow and
+        // his footsteps were silent on the friend's screen; with fewer on the copy, each paired source still follows
+        string[] original = ["", "Audio Voice", "Audio Footsteps"];
+        string[] clone = ["Audio Footsteps", "", "Audio Extra"];
+        Assert.Equal(["clone root", null, "clone Footsteps"],
+            DamagePairs.Paired(["clone Footsteps", "clone root", "clone Extra"], DamagePairs.Align(original, clone)));
+        Assert.Equal([null, null], DamagePairs.Paired(["clone root"], DamagePairs.Align(["Audio A", "Audio B"], [""])));
+        Assert.False(DamagePairs.AnyPaired(DamagePairs.Align(["Audio A"], ["Audio B"])));
+        Assert.True(DamagePairs.AnyPaired(DamagePairs.Align(original, clone)));
+    }
 }

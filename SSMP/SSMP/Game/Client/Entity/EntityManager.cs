@@ -52,6 +52,12 @@ internal class EntityManager {
     private const int MaxPendingReliableUpdates = ushort.MaxValue;
 
     /// <summary>
+    /// (coop) The rest of a reliable update that waits for the next frame with its death (Entity.UpdateData), and its
+    /// entity's updates behind it, in order, each with the frame it waits from.
+    /// </summary>
+    private readonly List<(ReliableEntityUpdate Update, bool AlreadyInScene, int Frame)> _held = [];
+
+    /// <summary>
     /// Detour hook for intercepting FSM queries targeting inactive game objects.
     /// </summary>
     private Hook? _findGameObjectHook;
@@ -271,6 +277,15 @@ internal class EntityManager {
             return false;
         }
 
+        // (coop) an update behind a death that waits a frame waits with it, in order
+        if (_held.Count > 0) {
+            var ahead = _held.FindLastIndex(h => h.Update.Id == update.Id);
+            if (ahead >= 0) {
+                _held.Add((update, alreadyInSceneUpdate, _held[ahead].Frame));
+                return false;
+            }
+        }
+
         // Death effects must read visibility before this same packet hides the copy.
         var hideAfterDeath = !IsSceneHost && update.UpdateTypes.Contains(EntityUpdateType.Active) &&
                              update.UpdateTypes.Contains(EntityUpdateType.Data) &&
@@ -286,13 +301,36 @@ internal class EntityManager {
                 entity.UpdateHostFsmData(update.HostFsmData);
         }
 
-        if (update.UpdateTypes.Contains(EntityUpdateType.Data))
-            entity.UpdateData(update.GenericData, alreadyInSceneUpdate);
+        if (update.UpdateTypes.Contains(EntityUpdateType.Data)) {
+            var waits = entity.UpdateData(update.GenericData, alreadyInSceneUpdate);
+            if (waits >= 0) {
+                // (coop) the rest waits for the next frame with its death and hide; what was applied comes out
+                update.GenericData.RemoveRange(0, waits);
+                update.UpdateTypes.Remove(EntityUpdateType.HostFsm);
+                if (!hideAfterDeath) update.UpdateTypes.Remove(EntityUpdateType.Active);
+                _held.Add((update, alreadyInSceneUpdate, Time.frameCount));
+                ThreadUtil.RunActionOnMainThread(ApplyHeld);
+                return false;
+            }
+        }
 
         if (hideAfterDeath)
             entity.UpdateIsActive(false);
 
         return true;
+    }
+
+    /// <summary>
+    /// (coop) Applies the held updates whose frame has passed, in order; the others wait for the next frame.
+    /// </summary>
+    private void ApplyHeld() {
+        var frame = Time.frameCount;
+        var due = _held.FindAll(h => h.Frame < frame);
+        _held.RemoveAll(h => h.Frame < frame);
+        if (_held.Count > 0) ThreadUtil.RunActionOnMainThread(ApplyHeld);
+        foreach (var (update, alreadyInScene, _) in due) {
+            if (HandleReliableEntityUpdate(update, alreadyInScene)) ReleaseUpdate(update);
+        }
     }
 
     /// <summary>
@@ -524,6 +562,11 @@ internal class EntityManager {
         }
 
         _pendingReliableUpdates.Clear();
+        foreach (var (heldUpdate, _, _) in _held) {
+            ReleaseUpdate(heldUpdate);
+        }
+
+        _held.Clear();
         MusicComponent.ClearInstance();
     }
 

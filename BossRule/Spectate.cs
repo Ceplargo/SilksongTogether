@@ -22,6 +22,11 @@ internal sealed class Spectate {
     /// </summary>
     public static bool Watching => Instance?._watching ?? false;
 
+    /// <summary>
+    /// (coop) Whether a boss fight is on in this room (a friend's talk then goes to the chat, not over the fight).
+    /// </summary>
+    public static bool FightOnIn(string scene) => Instance?._scene == scene;
+
     private static bool _bypass;
 
     /// <summary>

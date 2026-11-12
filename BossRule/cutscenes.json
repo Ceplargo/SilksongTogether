@@ -684,15 +684,33 @@
     "object": "Bone Beast NPC",
     "fsm": "Interaction",
     "start": [
-      "Take Control"
+      "Appear Delay"
     ],
+    "skip": [
+      "Hero Call",
+      "Open map",
+      "Choose Scene",
+      "Invalid",
+      "End Travel Interaction",
+      "Fade",
+      "Hero Jump",
+      "Hero Fire",
+      "Jump Sing",
+      "Time Passes",
+      "Go To Stag Cutscene",
+      "Wait Finished Entering",
+      "Take Control",
+      "Hero Fing Out",
+      "Travel Arrive End"
+    ],
+    "keeps_hero": true,
     "values": [],
     "needs": {
       "defeatedBellBeast": true,
       "UnlockedFastTravel": true
     },
     "how": "event",
-    "note": "The bell rung, the Bell Beast comes, the rider picks a station and travels through the cinematic scene Cinematic_Stag_travel; at the station Hero Fling Out drops the hero. A new game's beast is at no station: in Bone_05 (on there after its fight) its Wait For Call takes INTERACT (Hero Call), it comes, and INTERACT at Idle opens the map (Open map), where CoopQA travelto picks a station.",
+    "note": "The bell rung, the Bell Beast comes, the rider picks a station and travels through the cinematic scene Cinematic_Stag_travel; at the station Hero Fling Out drops the hero. A new game's beast is at no station: in Bone_05 (on there after its fight) its Wait For Call takes INTERACT (Hero Call), it comes, and INTERACT at Idle opens the map (Open map), where CoopQA travelto picks a station. (0.3.21) The other games follow it from Appear Delay with their own heroes (keeps_hero): their beast comes too, and the rider's own states (the call's pose, the map, the jump and fling, the travel) are skipped.",
     "probe": {
       "event": "INTERACT",
       "direct": true,
@@ -702,8 +720,7 @@
         "Open map": "once:travel:Docks"
       },
       "length_s": 60
-    },
-    "follow": false
+    }
   },
   {
     "name": "caravan_ride",
@@ -716,7 +733,18 @@
     "object": "Black Thread States Thread Only Variant/Normal World/Caravan",
     "fsm": "Quest End Sequence",
     "start": [
-      "Fade Down"
+      "Travel",
+      "No Travel",
+      "Fade Down",
+      "Set Location",
+      "Travel?",
+      "Sound With",
+      "Sound Without"
+    ],
+    "keeps_hero": true,
+    "leave_at": [
+      "Sound With",
+      "Sound Without"
     ],
     "values": [
       "CaravanTroupeLocation"
@@ -725,13 +753,12 @@
       "CaravanTroupeLocation": "Bone"
     },
     "how": "event",
-    "note": "The flea caravan moves on with the hero inside (Room_Caravan_Interior_Travel). A new game's caravan is at Bone_10 (CaravanTroupeLocation Bone), first here. The troupe leader's travel yes sends QUEST END TRAVEL straight to its Quest End Sequence (SendEventByNameV2), so the probe sends it there.",
+    "note": "The flea caravan moves on with the hero inside (Room_Caravan_Interior_Travel). A new game's caravan is at Bone_10 (CaravanTroupeLocation Bone), first here. The troupe leader's travel yes sends QUEST END TRAVEL straight to its Quest End Sequence (SendEventByNameV2), so the probe sends it there. (0.3.21) The other games keep their heroes and play what the room shows of each state told (its register events: the flea music and sounds stop; its sound), and the caravan's children go off at Sound With or Sound Without, as its own Disable does; following its states would fade their screens and change their room.",
     "probe": {
       "event": "QUEST END TRAVEL",
       "direct": true,
       "length_s": 60
-    },
-    "follow": false
+    }
   },
   {
     "name": "farsight",

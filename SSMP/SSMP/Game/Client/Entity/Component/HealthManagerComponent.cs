@@ -78,6 +78,12 @@ internal class HealthManagerComponent : EntityComponent {
     public System.Action<byte, GameObject>? FollowCorpse { get; set; }
 
     /// <summary>
+    /// (coop) Scene host: the enemy's hurt-box poll (DamageHeroComponent.OnUpdate), run as it dies, before the death is
+    /// sent (DeathOrder.ShowsLastBox). Set by the entity.
+    /// </summary>
+    public System.Action? PollBoxes { get; set; }
+
+    /// <summary>
     /// (coop) The corpses that follow the scene host's until they are switched off: a Dock Bomber's rolls on after it
     /// lands, by each game's own physics, and its gas went off where it stopped, 0.6 to 1.2 units from the host's.
     /// </summary>
@@ -302,6 +308,18 @@ internal class HealthManagerComponent : EntityComponent {
 
         Logger.Info("HealthManager Die was called on host entity");
 
+        // (coop) a hurt box that came on since this frame's poll goes out before the death, so the other games show it:
+        // Bone_16's Spike Collider killed a Bone Crawler the frame after its Spike Hit 3 came on, before the poll had sent
+        // it, and the friend's copy never showed that box
+        if (DeathOrder.ShowsLastBox()) PollBoxes?.Invoke();
+
+        // (coop) the killing hit's health change goes before the death, so the other games play that hit on their copy
+        // before it dies (UpdateHealth's PlayMissedHits): sent next frame, it reached a copy already dead, and the
+        // friend's game had no hit of the host's kills (Bone_16's Bone Circler in the lava, NOTES 368)
+        if (PlaysKillHits()) {
+            SendHealth(self);
+        }
+
         _hostCorpse = null;
         InvokeOrig();
 
@@ -365,44 +383,8 @@ internal class HealthManagerComponent : EntityComponent {
         // others the scene host's and theirs (B's mirror)
         PlayMissedHits(observedHealthManager);
 
-        var newHp = observedHealthManager.hp;
-        if (newHp != _lastHp) {
-            if (IsControlled && newHp > _lastHp) {
-                if (_hasPendingControlledHealCorrection) {
-                    if (Time.unscaledTime >= _pendingControlledHealCorrectionAt) {
-                        _hasPendingControlledHealCorrection = false;
-                        ApplyHp(_lastHp, triggerHostDeath: false);
-                    }
-                } else {
-                    _hasPendingControlledHealCorrection = true;
-                    _pendingControlledHealCorrectionAt = Time.unscaledTime + ControlledHealCorrectionDelaySeconds;
-                }
-
-                return;
-            }
-
-            _hasPendingControlledHealCorrection = false;
-            var previousHp = _lastHp;
-            _lastHp = newHp;
-
-            // Obtain a pooled network data instance to avoid new allocations
-            var hpData = ObjectPool<EntityNetworkData>.Get();
-            hpData.Type = EntityComponentType.Health;
-
-            hpData.Packet.Write(previousHp);
-            hpData.Packet.Write(newHp);
-            hpData.Packet.Write(_currentHealthEpoch);
-            hpData.Packet.Write(_pendingStun);
-            hpData.Packet.Write(newHp < previousHp ? HitKind.ForDrop(_pendingKind, _pendingKindFrame, Time.frameCount) : HitKind.None);
-
-            SendData(hpData);
-            if (LogsHealth) {
-                Logger.Debug($"(coop) health sent: {observedHealthManager.name} {previousHp} to {newHp}, controlled {IsControlled}, " +
-                             $"stun {_pendingStun}");
-            }
-
-            _pendingStun = 0f;
-            _pendingKind = HitKind.None;
+        if (!SendHealth(observedHealthManager)) {
+            return;
         }
 
         var newInvincible = _healthManager.Host.IsInvincible;
@@ -422,6 +404,55 @@ internal class HealthManagerComponent : EntityComponent {
 
             SendData(invincibilityData);
         }
+    }
+
+    /// <summary>
+    /// Sends the health change since the last sent, if any. False while a controlled copy's rise waits for its
+    /// correction: nothing else is sent that frame.
+    /// </summary>
+    private bool SendHealth(HealthManager observedHealthManager) {
+        var newHp = observedHealthManager.hp;
+        if (newHp != _lastHp) {
+            if (IsControlled && newHp > _lastHp) {
+                if (_hasPendingControlledHealCorrection) {
+                    if (Time.unscaledTime >= _pendingControlledHealCorrectionAt) {
+                        _hasPendingControlledHealCorrection = false;
+                        ApplyHp(_lastHp, triggerHostDeath: false);
+                    }
+                } else {
+                    _hasPendingControlledHealCorrection = true;
+                    _pendingControlledHealCorrectionAt = Time.unscaledTime + ControlledHealCorrectionDelaySeconds;
+                }
+
+                return false;
+            }
+
+            _hasPendingControlledHealCorrection = false;
+            var previousHp = _lastHp;
+            _lastHp = newHp;
+
+            // Obtain a pooled network data instance to avoid new allocations
+            var hpData = ObjectPool<EntityNetworkData>.Get();
+            hpData.Type = EntityComponentType.Health;
+
+            hpData.Packet.Write(previousHp);
+            hpData.Packet.Write(newHp);
+            hpData.Packet.Write(_currentHealthEpoch);
+            hpData.Packet.Write(_pendingStun);
+            var sentKind = newHp < previousHp ? HitKind.ForDrop(_pendingKind, _pendingKindFrame, Time.frameCount) : HitKind.None;
+            hpData.Packet.Write(sentKind);
+
+            SendData(hpData);
+            if (LogsHealth) {
+                Logger.Debug($"(coop) health sent: {observedHealthManager.name} {previousHp} to {newHp}, controlled {IsControlled}, " +
+                             $"stun {_pendingStun}, kind {sentKind}");
+            }
+
+            _pendingStun = 0f;
+            _pendingKind = HitKind.None;
+        }
+
+        return true;
     }
 
     /// <inheritdoc />
@@ -490,7 +521,13 @@ internal class HealthManagerComponent : EntityComponent {
                 var client = _healthManager.Client;
                 var special = client.hasSpecialDeath;
                 client.hasSpecialDeath = !regularDeath;
-                client.Die(attackDirection, attackType, ignoreEvasion);
+                // (coop) its death leaves out the hit sounds this game's own killing hit just played (KillSounds)
+                if (SkipsKillRepeats()) KillSounds.Seen.BeginDeath(client.GetInstanceID(), Time.unscaledTimeAsDouble);
+                try {
+                    client.Die(attackDirection, attackType, ignoreEvasion);
+                } finally {
+                    KillSounds.Seen.EndDeath();
+                }
                 if (!client.isDead) client.hasSpecialDeath = special;
 
                 if (hasCorpseSnapshot && _clientCorpse != null) {
@@ -522,6 +559,57 @@ internal class HealthManagerComponent : EntityComponent {
                 _healthManager.Client.InvincibleFromDirection = newInvincibleFromDir;
                 break;
             }
+            case EntityComponentType.BlockedHit: {
+                var x = data.Packet.ReadFloat();
+                var y = data.Packet.ReadFloat();
+                var angle = data.Packet.ReadFloat();
+                // a late entry's catch-up holds the last one, long played
+                if (!alreadyInSceneUpdate) PlayBlock(x, y, angle);
+                break;
+            }
+        }
+    }
+
+    /// <summary>(coop) HealthManager's own block feedback, which a copy plays for the scene host's block (PlayBlock).</summary>
+    private static readonly FieldInfo? BlockHitPrefab = typeof(HealthManager).GetField("blockHitPrefab", HookBindingFlags);
+
+    private static readonly FieldInfo? HasAlternateInvincibleSound =
+        typeof(HealthManager).GetField("hasAlternateInvincibleSound", HookBindingFlags);
+
+    private static readonly FieldInfo? AlternateInvincibleSound =
+        typeof(HealthManager).GetField("alternateInvincibleSound", HookBindingFlags);
+
+    private static readonly FieldInfo? RegularInvincibleAudio =
+        typeof(HealthManager).GetField("regularInvincibleAudio", HookBindingFlags);
+
+    private static readonly FieldInfo? AudioPlayerPrefab = typeof(HealthManager).GetField("audioPlayerPrefab", HookBindingFlags);
+
+    /// <summary>
+    /// (coop) The copy shows the scene host's block of a world object's hit as the game shows its own
+    /// (HealthManager.Invincible): its block flash where the scene host's went, turned the same, and its invincible
+    /// sound; then its tinkTimer is set, as the game sets it (BlockedHits). Not the game's camera shake.
+    /// </summary>
+    private void PlayBlock(float x, float y, float angle) {
+        var copy = _healthManager.Client;
+        if (copy == null || copy.isDead || !copy.gameObject.activeInHierarchy) return;
+        if (BlockHitPrefab?.GetValue(copy) is GameObject prefab && prefab != null) {
+            var flash = prefab.Spawn();
+            flash.transform.position = new Vector3(x, y, 0f);
+            flash.transform.eulerAngles = new Vector3(0f, 0f, angle);
+        }
+
+        if (HasAlternateInvincibleSound?.GetValue(copy) is true) {
+            var source = copy.GetComponent<AudioSource>();
+            if (AlternateInvincibleSound?.GetValue(copy) is AudioClip clip && clip != null && source != null) {
+                source.PlayOneShot(clip);
+            }
+        } else if (RegularInvincibleAudio?.GetValue(copy) is AudioEvent audio) {
+            audio.SpawnAndPlayOneShot(AudioPlayerPrefab?.GetValue(copy) as AudioSource, copy.transform.position);
+        }
+
+        copy.tinkTimer = 0.1f;
+        if (LogsHealth) {
+            Logger.Debug($"(coop) block shown: {copy.name} at ({x:0.##}, {y:0.##}), turned {angle}, frame {Time.frameCount}");
         }
     }
 
@@ -577,6 +665,14 @@ internal class HealthManagerComponent : EntityComponent {
                 MissedHits.For(_healthManager.Client.GetInstanceID()).Landed(Time.unscaledTime, 0f, kind);
             }
 
+            // (coop) a killing hit plays as a hit before the death it brings, as the game's own does (TakeDamage plays
+            // its hit effects, then Die): PlayMissedHits plays only while the enemy lives, so the scene host's game
+            // lost the flash, blood and sounds of each of another player's killing hits (NOTES 368)
+            if (change < 0 && currentHp + change <= 0 && PlaysKillHits()) {
+                var shown = isControlled ? _healthManager.Client : _healthManager.Host;
+                if (shown != null) PlayMissedHits(shown);
+            }
+
             var before = GetCurrentHp();
             ApplyHp(currentHp + change, triggerHostDeath: true);
             if (merges) {
@@ -585,7 +681,7 @@ internal class HealthManagerComponent : EntityComponent {
 
             if (LogsHealth) {
                 Logger.Debug($"(coop) health received: {previousHp} to {newHp} ({change}); here {before} to {GetCurrentHp()}, " +
-                             $"last sent {lastSent} to {_lastHp}, controlled {isControlled}, stun {stun}");
+                             $"last sent {lastSent} to {_lastHp}, controlled {isControlled}, stun {stun}, kind {kind}");
             }
         }
     }
@@ -653,16 +749,66 @@ internal class HealthManagerComponent : EntityComponent {
     private static bool PlaysHostHits() => true;
 
     /// <summary>
-    /// (coop) This game's own hit on that enemy (its own original in the scene host's game, its copy in another): its kind,
-    /// sent with the drop it makes (HitKind).
+    /// (coop) Whether a copy's death on the scene host's word leaves out the hit sounds this game's own killing hit
+    /// played (KillSounds). Not inlined: copy_kill_sound's twin skips it, which gives false: then they play twice.
     /// </summary>
-    internal static void NoteOwnHit(HealthManager manager, HitInstance hit) {
-        if (!ByManager.TryGetValue(manager.GetInstanceID(), out var c)) return;
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool SkipsKillRepeats() => true;
+
+    /// <summary>
+    /// (coop) Whether another player's killing hit plays as a hit before the enemy dies. Not inlined: copy_kill_sound's
+    /// twin skips it, which gives false: then the host's game plays the friend's kill as a death alone, and the friend's
+    /// game the host's (its health change sent after the death).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool PlaysKillHits() => true;
+
+    /// <summary>(coop) Whether that is this game's copy of an enemy the scene host's game runs (it dies on its word).</summary>
+    internal static bool FollowsHost(HealthManager manager) =>
+        ByManager.TryGetValue(manager.GetInstanceID(), out var c) && c._clientId == manager.GetInstanceID() && c.IsControlled;
+
+    /// <summary>
+    /// (coop) This game's own hit on that enemy (its own original in the scene host's game, its copy in another): its kind,
+    /// sent with the drop it makes (HitKind). The note it replaced, or null when that enemy is not this game's own.
+    /// </summary>
+    internal static (int Kind, int Frame)? NoteOwnHit(HealthManager manager, HitInstance hit) {
+        if (!ByManager.TryGetValue(manager.GetInstanceID(), out var c)) return null;
         var own = c._clientId == manager.GetInstanceID() && c.IsControlled ||
                   c._hostId == manager.GetInstanceID() && !c.IsControlled;
-        if (!own) return;
+        if (!own) return null;
+        var replaced = (c._pendingKind, c._pendingKindFrame);
         c._pendingKind = HitKind.Pack((int) hit.AttackType, (int) hit.NailElement, (int) hit.HitEffectsType);
         c._pendingKindFrame = Time.frameCount;
+        return replaced;
+    }
+
+    /// <summary>(coop) The note a hit that took no health replaced, put back (HitNotes).</summary>
+    internal static void PutBackOwnHit(HealthManager manager, (int Kind, int Frame) note) {
+        if (ByManager.TryGetValue(manager.GetInstanceID(), out var c)) (c._pendingKind, c._pendingKindFrame) = note;
+    }
+
+    /// <summary>
+    /// (coop) The scene host's enemy showed its block of a world object's hit (BlockedHits): its copies show theirs where
+    /// its flash went (HealthManager.Invincible's place, by the hit's way and the enemy's box).
+    /// </summary>
+    internal static void SendBlockedHit(HealthManager manager, HitInstance hit) {
+        if (!ByManager.TryGetValue(manager.GetInstanceID(), out var c)) return;
+        var at = manager.transform.position;
+        var box = manager.GetComponent<BoxCollider2D>();
+        var (offset, size) = box != null ? (box.offset, box.size) : (Vector2.zero, Vector2.zero);
+        var source = hit.Source != null ? hit.Source.transform.position : at;
+        var way = DirectionUtils.GetCardinalDirection(hit.GetActualDirection(manager.transform, HitInstance.TargetType.Regular));
+        var (x, y, angle) = BlockedHits.Flash(way, at.x, at.y, box != null, offset.x, offset.y, size.x, size.y,
+            source.x, source.y);
+        var data = ObjectPool<EntityNetworkData>.Get();
+        data.Type = EntityComponentType.BlockedHit;
+        data.Packet.Write(x);
+        data.Packet.Write(y);
+        data.Packet.Write(angle);
+        c.SendData(data);
+        if (LogsHealth) {
+            Logger.Debug($"(coop) block sent: {manager.name} at ({x:0.##}, {y:0.##}), turned {angle}, frame {Time.frameCount}");
+        }
     }
 
     /// <summary>(coop) A stun this game's own hit gave its copy of that enemy: sent with its next health change.</summary>

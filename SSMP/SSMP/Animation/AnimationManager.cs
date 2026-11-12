@@ -678,6 +678,9 @@ internal class AnimationManager {
         { AnimationClip.Death, new Death() },
         { AnimationClip.DoubleJump, new FaydownCloak() },
         { AnimationClip.UmbrellaInflate, new DriftersCloak() },
+        // (coop) a soft landing at the copy, as the game alone lands its own hero
+        // (coop) a hard landing at the copy, its sound and dust, as the game alone lands its own hero, with no shake
+        { AnimationClip.HardLand, new HardLanding() },
 
         // Silk Skills
         { AnimationClip.NeedleThrowThrowing, new SilkSpear() },
@@ -696,6 +699,15 @@ internal class AnimationManager {
         { AnimationClip.ShamanCancel, new Bind { BindState = Bind.State.ShamanCancel } },
         { AnimationClip.BindInterrupt, BindInterrupt.Instance },
         { AnimationClip.Bench, new Bench() },
+        // (coop) a run start and a footstep at the copy, as the game alone plays its own hero's
+        { AnimationClip.RunStart, new StepSound { RunStart = true } },
+        { AnimationClip.Footstep, new StepSound() },
+        { AnimationClip.SoftLand, new Landing() },
+        { AnimationClip.TiltLand, new TiltLand() },
+        { AnimationClip.HeartGetUp, new HeartGetUpSound() },
+        { AnimationClip.ItemGetReaction, new ItemGetReactionEffect() },
+        { AnimationClip.DustLand, new DustLand() },
+        { AnimationClip.NailWallSpark, new NailWallSpark() },
 
         // Silk Skills
         { AnimationClip.AirSphereRefresh, new ThreadStorm() },
@@ -739,6 +751,13 @@ internal class AnimationManager {
     /// The last animation clip sent.
     /// </summary>
     private string? _lastAnimationClip;
+
+    /// <summary>
+    /// (coop, 0.3.21) The last slash clip sent: its name, the hero's attack count and when (SlashRepeatRule).
+    /// </summary>
+    private string? _lastSlashClip;
+    private int _lastSlashCount;
+    private double _lastSlashTime;
 
     // /// <summary>
     // /// Whether the animation controller was responsible for the last clip that was sent.
@@ -848,6 +867,14 @@ internal class AnimationManager {
         }
 
         EventHooks.UseLavaBell += OnMagmaBell;
+        EventHooks.HeroRunStart += OnHeroRunStart;
+        Landing.Landed += OnHeroSoftLanded;
+        RemoteTouches.HeroTiltLanded += OnHeroTiltLanded;
+        RemoteTouches.HeroDustLanded += OnHeroDustLanded;
+        EventHooks.HeroFootstep += OnHeroFootstep;
+        EventHooks.HeartGetUpPlayed += OnHeartGetUpPlayed;
+        EventHooks.ItemGetReacted += OnItemGetReacted;
+        NailSlashTerrainThunk.AnyThunked += OnHeroNailThunked;
 
         // Register a callback so we know when the dash has finished
         // On.HeroController.CancelDash += HeroControllerOnCancelDash;
@@ -872,6 +899,14 @@ internal class AnimationManager {
         DeregistersAnimatorHooks();
 
         HeroController.OnHeroInstanceSet -= CreateHeroHooks;
+        EventHooks.HeroRunStart -= OnHeroRunStart;
+        Landing.Landed -= OnHeroSoftLanded;
+        RemoteTouches.HeroTiltLanded -= OnHeroTiltLanded;
+        RemoteTouches.HeroDustLanded -= OnHeroDustLanded;
+        EventHooks.HeroFootstep -= OnHeroFootstep;
+        EventHooks.HeartGetUpPlayed -= OnHeartGetUpPlayed;
+        EventHooks.ItemGetReacted -= OnItemGetReacted;
+        NailSlashTerrainThunk.AnyThunked -= OnHeroNailThunked;
         FsmStateActionInjector.UninjectAll();
 
         MagnetiteDice.Unhook();
@@ -1125,6 +1160,21 @@ internal class AnimationManager {
         // Check whether there is an effect that adds info to this packet
         if (AnimationEffects.TryGetValue(animationClip, out var effect)) {
             var effectInfo = effect.GetEffectInfo();
+
+            // (coop, 0.3.21) a slash clip that starts again for the same attack (another clip cut in for a frame) is
+            // marked, so the other game plays the clip but makes no second slash (SlashBase.PlaysOnce)
+            if (effect is SlashBase) {
+                var count = HeroController.instance.cState.attackCount;
+                var now = Time.realtimeSinceStartupAsDouble;
+                if (SlashRepeatRule.IsRepeat(_lastSlashClip, _lastSlashCount, _lastSlashTime, clip.name, count, now)) {
+                    effectInfo = SlashBase.GetSlashEffectInfo(repeat: true);
+                    Logger.Debug($"(coop) slash clip {clip.name} again for attack {count}, {now - _lastSlashTime:0.000} s on: marked");
+                }
+
+                _lastSlashClip = clip.name;
+                _lastSlashCount = count;
+                _lastSlashTime = now;
+            }
 
             _netClient.UpdateManager.UpdatePlayerAnimation(animationClip, 0, effectInfo);
         } else if (SubAnimationEffects.TryGetValue(animationClip, out var subEffect)) {
@@ -1551,6 +1601,104 @@ internal class AnimationManager {
 
         var effectInfo = BaseAttackTool.GetToolInfo();
         _netClient.UpdateManager.UpdatePlayerAnimation(toolClip, 0, effectInfo);
+    }
+
+    /// <summary>
+    /// (coop) This game's hero played her run start: her copies in the other games play one too.
+    /// </summary>
+    private void OnHeroRunStart() {
+        if (!_netClient.IsConnected) {
+            return;
+        }
+
+        _netClient.UpdateManager.UpdatePlayerAnimation(AnimationClip.RunStart);
+    }
+
+    /// <summary>
+    /// (coop) This game's hero played a footstep: her copies in the other games play one too.
+    /// </summary>
+    /// <summary>
+    /// (coop) This game's hero reacted to an item it got (ItemGetReaction): her copies in the other games react too.
+    /// </summary>
+    private void OnItemGetReacted(byte[] info) {
+        if (!_netClient.IsConnected) {
+            return;
+        }
+
+        _netClient.UpdateManager.UpdatePlayerAnimation(AnimationClip.ItemGetReaction, effectInfo: info);
+    }
+
+    private void OnHeartGetUpPlayed(byte[] info) {
+        if (!_netClient.IsConnected) {
+            return;
+        }
+
+        _netClient.UpdateManager.UpdatePlayerAnimation(AnimationClip.HeartGetUp, effectInfo: info);
+    }
+
+    /// <summary>
+    /// (coop) This game's hero played a footstep: her copies in the other games play one too.
+    /// </summary>
+    private void OnHeroFootstep() {
+        if (!_netClient.IsConnected) {
+            return;
+        }
+
+        _netClient.UpdateManager.UpdatePlayerAnimation(AnimationClip.Footstep, effectInfo: Landing.LandersGround());
+    }
+
+    /// <summary>
+    /// (coop) This game's hero landed on a tilting platform: her copies land there again if they already stand on it.
+    /// </summary>
+    private void OnHeroTiltLanded() {
+        if (!_netClient.IsConnected) {
+            return;
+        }
+
+        _netClient.UpdateManager.UpdatePlayerAnimation(AnimationClip.TiltLand);
+    }
+
+    /// <summary>(coop, 0.3.21) The game's sparks found by <see cref="OnHeroNailThunked"/>.</summary>
+    private static readonly List<GameObject> NailSparks = new();
+
+    /// <summary>
+    /// (coop, 0.3.21) This game's hero's nail met a wall (SSMP skips a copy's handler, so only hers raise it): if the game
+    /// spawned its spark there (not on a tink or a NonThunker), it spawns at the same place in the other games too.
+    /// </summary>
+    private void OnHeroNailThunked(Vector2 at, int surfaceDir) {
+        var prefab = global::GlobalSettings.Effects.EnemyNailTerrainThunk;
+        if (!_netClient.IsConnected || !prefab) {
+            return;
+        }
+
+        ObjectPool.GetSpawned(prefab, NailSparks, false);
+        foreach (var spark in NailSparks) {
+            if (!spark || ((Vector2) spark.transform.position - at).sqrMagnitude > 0.0001f) continue;
+            _netClient.UpdateManager.UpdatePlayerAnimation(
+                AnimationClip.NailWallSpark, effectInfo: ThunkSpark.Info(at.x, at.y, spark.transform.eulerAngles.z)
+            );
+            return;
+        }
+    }
+
+    /// <summary>(coop) This game's hero set off a dusty platform's dirt fall: it falls at her copies too.</summary>
+    private void OnHeroDustLanded(float x, float y) {
+        if (!_netClient.IsConnected) {
+            return;
+        }
+
+        _netClient.UpdateManager.UpdatePlayerAnimation(AnimationClip.DustLand, effectInfo: DustSpots.Info(x, y));
+    }
+
+    /// <summary>
+    /// (coop) This game spawned its hero's soft landing: her copies in the other games land on her ground too.
+    /// </summary>
+    private void OnHeroSoftLanded() {
+        if (!_netClient.IsConnected) {
+            return;
+        }
+
+        _netClient.UpdateManager.UpdatePlayerAnimation(AnimationClip.SoftLand, effectInfo: Landing.LandersGround());
     }
 
     /// <summary>

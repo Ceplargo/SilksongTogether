@@ -220,6 +220,7 @@ internal static partial class EntityFsmActions {
         new ActionInState {
             Fsm = action.Fsm,
             StateName = action.State.Name,
+            Emitter = particleSystem,
             ExitAction = () => {
                 if (particleSystem.isPlaying) {
                     particleSystem.Stop();
@@ -229,6 +230,32 @@ internal static partial class EntityFsmActions {
     }
 
     #endregion
+
+    /// <summary>
+    /// (coop) A copy that learns the scene host's FSM is in stateName starts that state's in-state particles that are not
+    /// playing, as the scene host's PlayParticleEmitterInState did on entering it (LateEffects): a copy made after that
+    /// never got the play. Stopped on the state's exit, as a copied one is.
+    /// </summary>
+    internal static void PlayLateEffects(HutongGames.PlayMaker.Fsm fsm, string stateName) {
+        var state = fsm.GetState(stateName);
+        if (state == null || fsm.GameObject == null || !fsm.GameObject.activeInHierarchy) return;
+        foreach (var action in state.Actions) {
+            if (action is not PlayParticleEmitterInState inState || inState.gameObject == null) continue;
+            var target = fsm.GetOwnerDefaultTarget(inState.gameObject);
+            var particles = target != null ? target.GetComponent<ParticleSystem>() : null;
+            if (!LateEffects.Needed(particles != null, particles != null && particles.isPlaying)) continue;
+
+            particles!.Play();
+            new ActionInState {
+                Fsm = fsm,
+                StateName = stateName,
+                Emitter = particles,
+                ExitAction = () => {
+                    if (particles.isPlaying) particles.Stop();
+                }
+            }.Register();
+        }
+    }
 
     #region StopParticleEmitter
 

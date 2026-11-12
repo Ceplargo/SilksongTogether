@@ -15,7 +15,10 @@ internal enum BossPacketId {
     ArenaFollow,
     Mark,
     CutsceneState,
-    BossReady
+    BossReady,
+    Dialogue,
+    DropTaken,
+    TollCoins
 }
 
 internal abstract class BossPacket : IPacketData {
@@ -32,10 +35,15 @@ internal abstract class BossPacket : IPacketData {
         BossPacketId.FightStarted => new FightStarted(),
         BossPacketId.Downed => new Downed(),
         BossPacketId.BossDefeated => new BossDefeated(),
-        BossPacketId.ArenaFollow => new ArenaFollow(),
+        // (0.3.21) a collection: two words in one update (a faller's two platforms' resets) both arrive; as single data
+        // the second replaced the first (crumble_reset, 2026-11-10_183308)
+        BossPacketId.ArenaFollow => new PacketDataCollection<ArenaFollow>(),
         BossPacketId.Mark => new Mark(),
         BossPacketId.CutsceneState => new PacketDataCollection<CutsceneState>(),
         BossPacketId.BossReady => new BossReady(),
+        BossPacketId.Dialogue => new PacketDataCollection<DialogueMessage>(),
+        BossPacketId.DropTaken => new DropTaken(),
+        BossPacketId.TollCoins => new TollCoins(),
         _ => new Outcome()
     };
 
@@ -228,5 +236,60 @@ internal class Mark : BossPacket {
     public override void ReadData(IPacket packet) {
         Id = packet.ReadString();
         By = packet.ReadString();
+    }
+}
+
+/// <summary>
+/// (coop) A page of a friend's talk, or a quest they took or finished (DialogueShare's encoding): from the talker's game to
+/// the server, and from the server to every other connected player. Sent as collection data: as single data a second page
+/// in the same send overwrote the first.
+/// </summary>
+internal class DialogueMessage : BossPacket {
+    public string Body = "";
+
+    public override void WriteData(IPacket packet) => packet.Write(Body);
+
+    public override void ReadData(IPacket packet) => Body = packet.ReadString();
+}
+
+/// <summary>
+/// (0.3.21) A take of an enemy's item drop (<see cref="DropShare"/>): from the taker's game to the server; from the server
+/// to every other connected player when it is the drop's first take, or back to the taker (Lost) when another game's
+/// came first.
+/// </summary>
+internal class DropTaken : BossPacket {
+    public string Scene = "";
+    public string Id = "";
+    public bool Lost;
+
+    public override void WriteData(IPacket packet) {
+        packet.Write(Scene);
+        packet.Write(Id);
+        packet.Write(Lost);
+    }
+
+    public override void ReadData(IPacket packet) {
+        Scene = packet.ReadString();
+        Id = packet.ReadString();
+        Lost = packet.ReadBool();
+    }
+}
+
+/// <summary>
+/// (0.3.21) A toll machine's payment sound (<see cref="TollFollow"/>): the payer's scene and the state of its machine's
+/// payment sub-FSM that played it, from the payer's game to the server and on to every other connected player.
+/// </summary>
+internal class TollCoins : BossPacket {
+    public string Scene = "";
+    public string State = "";
+
+    public override void WriteData(IPacket packet) {
+        packet.Write(Scene);
+        packet.Write(State);
+    }
+
+    public override void ReadData(IPacket packet) {
+        Scene = packet.ReadString();
+        State = packet.ReadString();
     }
 }

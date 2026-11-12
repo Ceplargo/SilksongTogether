@@ -77,8 +77,22 @@ internal static class DamagePairs {
 
     private static string Named(string path) => path.Length == 0 ? "own box" : path;
 
+    /// <summary>The clone's parts in the original's order (Align's pairs): each the clone's of the same path, or null
+    /// where the clone has none, so a part with no partner is left alone (a sound source stays silent rather than
+    /// playing another source's clip).</summary>
+    public static T?[] Paired<T>(T[] clone, int[] pairs) where T : class =>
+        System.Array.ConvertAll(pairs, i => i < 0 ? null : clone[i]);
+
+    /// <summary>Whether any of the original's parts has a partner on the clone.</summary>
+    public static bool AnyPaired(int[] pairs) => System.Array.Exists(pairs, i => i >= 0);
+
     /// <summary>Whether the hurt boxes pair by path. Not inlined: the plunge blast's and roar glow's twins skip it, which
     /// gives false: then they pair by index as before.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool ByPath() => true;
+
+    /// <summary>Whether a copy's sound sources pair by path (0.3.21). Not inlined: the copied sounds' twin skips it,
+    /// which gives false: then a copy follows loops only when it holds as many sources as the original, by index.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool SoundsByPath() => true;
 }

@@ -104,6 +104,31 @@ public static class EventHooks {
     private static Hook? _heroControllerUseLavaBellHook;
 
     /// <summary>
+    /// (coop) Hook for HeroAudioController.PlaySound, for the hero's run start.
+    /// </summary>
+    private static Hook? _heroAudioPlaySoundHook;
+
+    /// <summary>
+    /// (coop) Hook for HeroAudioController.PlayFootstep, for the hero's footsteps.
+    /// </summary>
+    private static Hook? _heroAudioPlayFootstepHook;
+    private static Hook? _heartGetUpHook;
+    private static Hook? _itemGetReactionHook;
+
+    /// <summary>
+    /// (coop) This game's hero reacted to an item it got (CollectableItemHeroReaction; ItemGetReaction): the effect info.
+    /// </summary>
+    public static event Action<byte[]>? ItemGetReacted;
+
+    private static readonly FieldInfo? PlayedRunStart =
+        typeof(HeroAudioController).GetField("playedRunStart", System.Reflection.BindingFlags.Instance |
+                                                               System.Reflection.BindingFlags.NonPublic);
+
+    private static readonly FieldInfo? PlayedWalkStart =
+        typeof(HeroAudioController).GetField("playedWalkStart", System.Reflection.BindingFlags.Instance |
+                                                                System.Reflection.BindingFlags.NonPublic);
+
+    /// <summary>
     /// Hook for GameMap.PositionCompassAndCorpse.
     /// </summary>
     private static Hook? _gameMapPositionCompassAndCorpseHook;
@@ -218,6 +243,22 @@ public static class EventHooks {
     /// Event that is called when HeroController.UseLavaBell is called.
     /// </summary>
     public static event Action? UseLavaBell;
+
+    /// <summary>
+    /// (coop) Event that is called when this game's hero plays her run start (<see cref="Game.Client.HeroSteps"/>).
+    /// </summary>
+    public static event Action? HeroRunStart;
+
+    /// <summary>
+    /// (coop) Event that is called when this game's hero plays a footstep (HeroAudioController.OnPlayFootstep fired).
+    /// </summary>
+    public static event Action? HeroFootstep;
+
+    /// <summary>
+    /// (coop) This game's Silk Heart played one of its hero's get-up clip tables (HeartGetUp): the effect info of the
+    /// play (its state and action).
+    /// </summary>
+    public static event Action<byte[]>? HeartGetUpPlayed;
 
     /// <summary>
     /// Event that is called when GameMap.PositionCompassAndCorpse is called.
@@ -369,6 +410,24 @@ public static class EventHooks {
         _heroControllerUseLavaBellHook = new Hook(
             typeof(HeroController).GetMethod(nameof(HeroController.UseLavaBell), BindingFlags),
             OnUseLavaBell
+        );
+
+        _heroAudioPlaySoundHook = new Hook(
+            typeof(HeroAudioController).GetMethod(nameof(HeroAudioController.PlaySound), BindingFlags),
+            OnHeroAudioPlaySound
+        );
+        _itemGetReactionHook = new Hook(
+            typeof(CollectableItemHeroReaction).GetMethod("InternalDoReaction", BindingFlags),
+            OnItemGetReaction
+        );
+        _heartGetUpHook = new Hook(
+            typeof(HutongGames.PlayMaker.Actions.PlayRandomAudioClipTable).GetMethod(
+                nameof(HutongGames.PlayMaker.Actions.PlayRandomAudioClipTable.OnEnter), BindingFlags),
+            OnPlayRandomAudioClipTable
+        );
+        _heroAudioPlayFootstepHook = new Hook(
+            typeof(HeroAudioController).GetMethod(nameof(HeroAudioController.PlayFootstep), BindingFlags),
+            OnHeroAudioPlayFootstep
         );
 
         _gameMapPositionCompassAndCorpseHook = new Hook(
@@ -574,6 +633,69 @@ public static class EventHooks {
         orig(self);
 
         UseLavaBell?.Invoke();
+    }
+
+    private static void OnHeroAudioPlaySound(
+        Action<HeroAudioController, GlobalEnums.HeroSounds, bool> orig,
+        HeroAudioController self,
+        GlobalEnums.HeroSounds soundEffect,
+        bool playVibration
+    ) {
+        var start = soundEffect == GlobalEnums.HeroSounds.FOOTSTEPS_WALK ? PlayedWalkStart : PlayedRunStart;
+        var footsteps = soundEffect is GlobalEnums.HeroSounds.FOOTSTEPS_RUN or GlobalEnums.HeroSounds.FOOTSTEPS_WALK;
+        var before = footsteps && start?.GetValue(self) is true;
+
+        orig(self, soundEffect, playVibration);
+
+        if (!footsteps || HeroRunStart == null) return;
+        var hero = self.GetComponent<HeroController>();
+        if (Game.Client.HeroSteps.RunStarted(true, before, start?.GetValue(self) is true,
+                hero != null && hero.cState.transitioning)) {
+            HeroRunStart.Invoke();
+        }
+    }
+
+    private static void OnItemGetReaction(
+        Action<CollectableItemHeroReaction, UnityEngine.Vector2?, bool> orig, CollectableItemHeroReaction self, UnityEngine.Vector2? effectOffset,
+        bool smallEffect
+    ) {
+        orig(self, effectOffset, smallEffect);
+        var offset = effectOffset ?? UnityEngine.Vector2.zero;
+        if (Game.Client.ItemGetReaction.Info(smallEffect, offset.x, offset.y) is { } info) ItemGetReacted?.Invoke(info);
+    }
+
+    private static void OnPlayRandomAudioClipTable(
+        Action<HutongGames.PlayMaker.Actions.PlayRandomAudioClipTable> orig,
+        HutongGames.PlayMaker.Actions.PlayRandomAudioClipTable self
+    ) {
+        orig(self);
+        if (HeartGetUpPlayed == null || self.Fsm == null || self.State == null) return;
+        if (!Game.Client.HeartGetUp.Sends(self.Fsm.GameObject != null ? self.Fsm.GameObject.name : null, self.Fsm.Name)) {
+            return;
+        }
+
+        var info = Game.Client.HeartGetUp.Info(System.Array.IndexOf(self.Fsm.States, self.State),
+            System.Array.IndexOf(self.State.Actions, self));
+        if (info != null) HeartGetUpPlayed.Invoke(info);
+    }
+
+    private static void OnHeroAudioPlayFootstep(Action<HeroAudioController> orig, HeroAudioController self) {
+        if (HeroFootstep == null) {
+            orig(self);
+            return;
+        }
+
+        // the game fires OnPlayFootstep only when the footstep plays (CanPlayFootsteps, not blocked)
+        var played = false;
+        void Mark() => played = true;
+        self.OnPlayFootstep += Mark;
+        try {
+            orig(self);
+        } finally {
+            self.OnPlayFootstep -= Mark;
+        }
+
+        if (played) HeroFootstep.Invoke();
     }
 
     private static void OnGameMapPositionCompassAndCorpse(Action<GameMap> orig, GameMap self) {

@@ -13325,6 +13325,19 @@
     {
       "Key": {
         "id": "Caravan Lech",
+        "sceneName": "GLOBAL_SHARED"
+      },
+      "Value": {
+        "Sync": true,
+        "SyncType": "Server",
+        "IgnoreSceneHost": true,
+        "VarType": "System.Boolean",
+        "Additive": false
+      }
+    },
+    {
+      "Key": {
+        "id": "Caravan Lech",
         "sceneName": "Aqueduct_05_caravan"
       },
       "Value": {

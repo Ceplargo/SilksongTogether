@@ -129,5 +129,14 @@ internal enum EntityComponentType : ushort {
     /// <summary>(coop) An enemy's children's places within it (<see cref="ChildPlacesComponent"/>).</summary>
     ChildPlaces,
     /// <summary>(coop) An enemy's body box (<see cref="BodyBoxComponent"/>).</summary>
-    BodyBox
+    BodyBox,
+    /// <summary>(coop) A walking enemy's alert just played in the scene host's game (<see cref="StartleSound"/>).</summary>
+    Startle,
+    /// <summary>(coop) A walking enemy's walker fired OnWalking or OnRunning in the scene host's game
+    /// (<see cref="WalkEvents"/>).</summary>
+    WalkEvent,
+    /// <summary>(coop) A bone segment an enemy began or stopped touching in the scene host's game (CopyPresses).</summary>
+    BonePress,
+    /// <summary>(coop) The scene host's enemy showed its block of a world object's hit (<see cref="BlockedHits"/>).</summary>
+    BlockedHit
 }

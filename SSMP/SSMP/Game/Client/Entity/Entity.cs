@@ -132,6 +132,11 @@ internal class Entity {
     private readonly Dictionary<FsmStateAction, HookedEntityAction> _hookedActions;
 
     /// <summary>
+    /// (coop) Each host FSM's Fsm as its actions were hooked; a template FSM's Init replaces it (TemplateRehook).
+    /// </summary>
+    private readonly Dictionary<PlayMakerFSM, HutongGames.PlayMaker.Fsm> _hookedFsms = new();
+
+    /// <summary>
     /// Set of FSM action types that have been hooked to prevent duplicate hooks.
     /// </summary>
     private readonly HashSet<Type> _hookedTypes;
@@ -235,7 +240,8 @@ internal class Entity {
         //);
 
         // Add a position interpolation component to the enemy so we can smooth out position updates
-        Object.Client.AddComponent<PredictiveInterpolation>();
+        // (coop, 0.3.21) not carried past the last place sent (CopyStopRule)
+        Object.Client.AddComponent<PredictiveInterpolation>().EnemyCopy = true;
 
         // Register an update event to send position updates and check for certain value changes
         MonoBehaviourUtil.Instance.OnUpdateEvent += OnUpdate;
@@ -244,6 +250,8 @@ internal class Entity {
             Host = Object.Host.GetComponent<tk2dSpriteAnimator>(),
             Client = Object.Client.GetComponent<tk2dSpriteAnimator>()
         };
+        ListenToWalker();
+        CopyPresses.Listen(Object.Host, SendBonePress);
         if (_animator.Host != null) {
             _animationClipNameIds = new BiLookup<string, byte>();
 
@@ -324,6 +332,12 @@ internal class Entity {
             hm.FollowCorpse = thrown.Follow;
         }
 
+        // (coop) its hurt boxes polled as it dies, before the death is sent (DeathOrder.ShowsLastBox)
+        if (health is HealthManagerComponent dying &&
+            _components.TryGetValue(EntityComponentType.DamageHero, out var boxes)) {
+            dying.PollBoxes = boxes.OnUpdate;
+        }
+
         HandleEnemyDeathEffects();
 
         _updatableComponents = new List<EntityComponent>();
@@ -378,11 +392,12 @@ internal class Entity {
     /// The corpses a copy keeps although they match the entity registry by the enemy's own name: their FSM ends the fight
     /// (the Last Judge's JUDGE DEFEATED, Sister Splinter's BOSS DEFEAT), so without them the friend's arena stayed shut;
     /// (coop) or the corpse itself explodes and hurts players near it, with no drops (a Tar Slug's: the friend saw no
-    /// explosion and was never hurt by one). Other kept corpses would run their own drops and quest pickups in the
-    /// friend's game too.
+    /// explosion and was never hurt by one; 0.3.21, a Rock Roller's, the same). Other kept corpses would run their own
+    /// drops and quest pickups in the friend's game too.
     /// </summary>
     private static readonly HashSet<string> KeptCorpses = [
-        "Corpse Last Judge", "Corpse Splinter Queen", "Corpse Tar Slug Expl", "Corpse Tar Slug Huge Expl"
+        "Corpse Last Judge", "Corpse Splinter Queen", "Corpse Tar Slug Expl", "Corpse Tar Slug Huge Expl",
+        "Corpse Rock Roller"
     ];
 
     /// <summary>
@@ -421,7 +436,27 @@ internal class Entity {
         //Logger.Info($"Processing host FSM: {fsm.Fsm.Name}");
 
         EntityInitializer.CheckPreProcessFsm(fsm);
+        HookHostActions(fsm);
 
+        var snapshot = new FsmSnapshot {
+            CurrentState = fsm.ActiveStateName,
+            Floats = fsm.FsmVariables.FloatVariables.Select(f => f.Value).ToArray(),
+            Ints = fsm.FsmVariables.IntVariables.Select(i => i.Value).ToArray(),
+            Bools = fsm.FsmVariables.BoolVariables.Select(b => b.Value).ToArray(),
+            Strings = fsm.FsmVariables.StringVariables.Select(s => s.Value).ToArray(),
+            Vector2s = fsm.FsmVariables.Vector2Variables.Select(v => v.Value).ToArray(),
+            Vector3s = fsm.FsmVariables.Vector3Variables.Select(v => v.Value).ToArray()
+        };
+
+        _fsmSnapshots.Add(snapshot);
+    }
+
+    /// <summary>
+    /// Hooks the supported actions of the given host FSM as it holds them now.
+    /// </summary>
+    /// <param name="fsm">The Playmaker FSM whose actions to hook.</param>
+    private void HookHostActions(PlayMakerFSM fsm) {
+        _hookedFsms[fsm] = fsm.Fsm;
         for (var i = 0; i < fsm.FsmStates.Length; i++) {
             var state = fsm.FsmStates[i];
             //var stateName = state.Name;
@@ -458,18 +493,6 @@ internal class Entity {
                 }
             }
         }
-
-        var snapshot = new FsmSnapshot {
-            CurrentState = fsm.ActiveStateName,
-            Floats = fsm.FsmVariables.FloatVariables.Select(f => f.Value).ToArray(),
-            Ints = fsm.FsmVariables.IntVariables.Select(i => i.Value).ToArray(),
-            Bools = fsm.FsmVariables.BoolVariables.Select(b => b.Value).ToArray(),
-            Strings = fsm.FsmVariables.StringVariables.Select(s => s.Value).ToArray(),
-            Vector2s = fsm.FsmVariables.Vector2Variables.Select(v => v.Value).ToArray(),
-            Vector3s = fsm.FsmVariables.Vector3Variables.Select(v => v.Value).ToArray()
-        };
-
-        _fsmSnapshots.Add(snapshot);
     }
 
     /// <summary>
@@ -506,6 +529,7 @@ internal class Entity {
             _components[EntityComponentType.Death] = hmComponent;
             _components[EntityComponentType.Health] = hmComponent;
             _components[EntityComponentType.Invincibility] = hmComponent;
+            _components[EntityComponentType.BlockedHit] = hmComponent;
 
             // Check if the object from the health manager is in any of the colosseum trial scenes and remove the
             // geo drops from them if so
@@ -590,7 +614,17 @@ internal class Entity {
 
         var hostSources = Object.Host.GetComponentsInChildren<AudioSource>(true);
         var clientSources = Object.Client.GetComponentsInChildren<AudioSource>(true);
-        if (hostSources.Length > 0 && hostSources.Length == clientSources.Length) {
+        if (hostSources.Length > 0 && DamagePairs.SoundsByPath()) {
+            // (coop) the copy's sound sources paired with the original's by their path under each, as the hurt boxes
+            // are: a copy with one more or one fewer (0.3.20's Dock Worker, one more) still follows each loop it has
+            var pairs = DamagePairs.Align(
+                System.Array.ConvertAll(hostSources, s => PathUnder(Object.Host.transform, s.transform)),
+                System.Array.ConvertAll(clientSources, s => PathUnder(Object.Client.transform, s.transform)));
+            if (DamagePairs.AnyPaired(pairs)) {
+                _components[EntityComponentType.AudioLoop] = new AudioLoopComponent(_netClient, Id, Object,
+                    hostSources, DamagePairs.Paired(clientSources, pairs)!);
+            }
+        } else if (hostSources.Length > 0 && hostSources.Length == clientSources.Length) {
             _components[EntityComponentType.AudioLoop] =
                 new AudioLoopComponent(_netClient, Id, Object, hostSources, clientSources);
         }
@@ -648,7 +682,7 @@ internal class Entity {
         }
 
         // What an enemy spawns from the pool, and its stage objects, fly where the scene host's do (see ThrownComponent)
-        if (ThrownComponent.HasStage(Object.Host.name) ||
+        if (ThrownComponent.HasStage(Object.Host.name) || FlungThrows.DropsFollowed(Object.Host.name) ||
             _fsms.Host.Any(fsm => fsm.FsmStates.Any(state => state.Actions.Any(action => action is SpawnObjectFromGlobalPool)))) {
             _components[EntityComponentType.Thrown] =
                 ComponentFactory.InstantiateByType(EntityComponentType.Thrown, _netClient, Id, Object);
@@ -735,8 +769,29 @@ internal class Entity {
     /// Callback method for entering a hooked FSM action.
     /// </summary>
     /// <param name="self">The FSM action instance that was entered.</param>
+    /// <summary>
+    /// (coop) An action this entity did not hook, of one of its host FSMs whose Fsm a template's Init replaced after
+    /// the hooking: that FSM hooked again, its old actions dropped (TemplateRehook). False for any other action.
+    /// </summary>
+    private bool Rehooked(FsmStateAction self, out HookedEntityAction hooked) {
+        hooked = null!;
+        var owner = self.Fsm?.FsmComponent;
+        if (owner == null || !_hookedFsms.TryGetValue(owner, out var was) ||
+            !TemplateRehook.Needed(was, owner.Fsm) || !TemplateRehook.Rehooks()) {
+            return false;
+        }
+
+        var index = _fsms.Host.IndexOf(owner);
+        foreach (var stale in _hookedActions.Where(p => p.Value.FsmIndex == index).Select(p => p.Key).ToList()) {
+            _hookedActions.Remove(stale);
+        }
+
+        HookHostActions(owner);
+        return _hookedActions.TryGetValue(self, out hooked);
+    }
+
     private void OnActionEntered(FsmStateAction self) {
-        if (!_hookedActions.TryGetValue(self, out var hookedEntityAction)) return;
+        if (!_hookedActions.TryGetValue(self, out var hookedEntityAction) && !Rehooked(self, out hookedEntityAction)) return;
         if (_isControlled) {
             // Uninterrupted native startup can create enemies before the room role is known.
             if (_uninterruptedStartup && !_isSceneHostDetermined && self is CreateObject created) {
@@ -1070,6 +1125,12 @@ internal class Entity {
             return;
         }
 
+        // (coop) its walker's alert just played, which no copy's walker plays (StartleSound)
+        if (PlaysStartleSound() && self.GetComponent<WalkerV2>() is var walker && walker != null &&
+            StartleSound.Sends(clip.name, walker.StartleAnim)) {
+            _netClient.UpdateManager.AddEntityData(Id, new EntityNetworkData { Type = EntityComponentType.Startle });
+        }
+
         if (!_animationClipNameIds.TryGetValue(clip.name, out var animationId)) {
             //Logger.Warn($"Entity '{Object.Client.name}' played unknown animation: {clip.name}");
             return;
@@ -1139,6 +1200,7 @@ internal class Entity {
     /// Initializes the entity when the client user is the scene host.
     /// </summary>
     public void InitializeHost(uint sceneHostEpoch = 0) {
+        LetGoBones();
         ResetChildAnimation(sceneHostEpoch);
         if (!_uninterruptedStartup) Object.Host.SetActive(_originalIsActive);
 
@@ -1228,6 +1290,7 @@ internal class Entity {
     /// Makes the entity a host entity if the client user became the scene host.
     /// </summary>
     public void MakeHost(uint sceneHostEpoch) {
+        LetGoBones();
         ResetChildAnimation(sceneHostEpoch);
         //Logger.Info($"Making entity ({Id}, {Type}) a host entity");
 
@@ -1574,6 +1637,115 @@ internal class Entity {
         _animator.Client.Play(clipName);
     }
 
+    private WalkerV2? _hostWalker;
+    private UnityEngine.Events.UnityAction<bool>? _onWalking, _onRunning;
+
+    /// <summary>(coop) The scene host's walker events go to every copy (WalkEvents).</summary>
+    private void ListenToWalker() {
+        _hostWalker = Object.Host != null ? Object.Host.GetComponent<WalkerV2>() : null;
+        if (_hostWalker == null) return;
+        _onWalking = on => SendWalkEvent(false, on);
+        _onRunning = on => SendWalkEvent(true, on);
+        _hostWalker.OnWalking?.AddListener(_onWalking);
+        _hostWalker.OnRunning?.AddListener(_onRunning);
+    }
+
+    private void SendWalkEvent(bool running, bool on) {
+        if (_isControlled || !CopiesWalkEvents()) return;
+        var data = new EntityNetworkData { Type = EntityComponentType.WalkEvent };
+        data.Packet.Write(WalkEvents.Encode(running, on));
+        _netClient.UpdateManager.AddEntityData(Id, data);
+    }
+
+    /// <summary>(coop) The bone segments this copy presses because the scene host's game sent them (CopyPresses).</summary>
+    private readonly HashSet<BoneSegment> _bonesPressed = [];
+
+    /// <summary>(coop) The scene host's enemy began or stopped touching a bone segment: sent by its place.</summary>
+    private void SendBonePress(Vector2 at, bool press) {
+        if (_isControlled || !CopyPresses.HoldsCopyPresses()) return;
+        var data = new EntityNetworkData { Type = EntityComponentType.BonePress };
+        data.Packet.Write(at.x);
+        data.Packet.Write(at.y);
+        data.Packet.Write(press);
+        _netClient.UpdateManager.AddEntityData(Id, data);
+    }
+
+    /// <summary>
+    /// (coop) The copy presses or lets go the sent segment with its box. A late entry's catch-up is passed by: its
+    /// presses would play long-past dusts.
+    /// </summary>
+    private void PressSentBone(EntityNetworkData data, bool alreadyInSceneUpdate) {
+        if (!_isControlled || alreadyInSceneUpdate || data.Packet.Length != 9 || Object.Client == null ||
+            !CopyPresses.HoldsCopyPresses()) return;
+        var x = data.Packet.ReadFloat();
+        var y = data.Packet.ReadFloat();
+        var press = data.Packet.ReadBool();
+        var segment = CopyPresses.At(x, y);
+        var box = Object.Client.GetComponent<Collider2D>();
+        if (segment == null || box == null) return;
+        if (press ? _bonesPressed.Add(segment) : _bonesPressed.Remove(segment)) CopyPresses.Press(segment, box, press);
+    }
+
+    /// <summary>(coop) The copy lets go every segment it pressed (a take-over, or the entity gone).</summary>
+    private void LetGoBones() {
+        var box = Object.Client != null ? Object.Client.GetComponent<Collider2D>() : null;
+        foreach (var segment in _bonesPressed) {
+            if (box != null) CopyPresses.Press(segment, box, false);
+        }
+
+        _bonesPressed.Clear();
+    }
+
+    /// <summary>(coop) Whether a copy's walker fires the scene host's walker events. Not inlined: walk_events' twin
+    /// skips it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CopiesWalkEvents() => true;
+
+    /// <summary>(coop, 0.3.21) The copy's loop sources not playing before a walk event.</summary>
+    private static List<AudioSource> SilentLoops(GameObject copy) {
+        var silent = new List<AudioSource>();
+        foreach (var source in copy.GetComponentsInChildren<AudioSource>(true)) {
+            if (source.loop && !source.isPlaying) silent.Add(source);
+        }
+
+        return silent;
+    }
+
+    /// <summary>
+    /// (coop, 0.3.21) A copy's loop the walk event's switch started counts as just played: it plays on awake, with no
+    /// Play for GamePatcher's hook to see, so it still stood at its first sample when the scene host's loop report came
+    /// and the loop follow played it again from its start (Bone_09's Dock Worker (2) copy's Walk Voice Loop, "extra:
+    /// Dock_Worker_idle_loop 1" in both orders, 2026-11-11_095325-enemies-pair4 and _100050-enemies-pair4).
+    /// </summary>
+    private static void MarkAwakeLoops(List<AudioSource> silent) {
+        if (!MarksAwakeLoops()) return;
+        foreach (var source in silent) {
+            if (source != null && source.isPlaying) LoopStarts.Played(source, Time.unscaledTime);
+        }
+    }
+
+    /// <summary>Not inlined: the walk_loop_starts check's twin skips it (the loop follow plays the copy's walk loop
+    /// again).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool MarksAwakeLoops() => true;
+
+    /// <summary>(coop) WalkerV2's private alert, which its walk plays as a hero comes near (StartleSound).</summary>
+    private static readonly FieldInfo? WalkerAggroSound =
+        typeof(WalkerV2).GetField("aggroSound", BindingFlags.Instance | BindingFlags.NonPublic);
+
+    /// <summary>(coop) Whether a copy plays its walker's alert with the host's startle (the scene host's game sends it,
+    /// the others play it). Not inlined: walker_alert's twin skips it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool PlaysStartleSound() => true;
+
+    /// <summary>(coop) The copy's walker plays its own alert where it stands (StartleSound).</summary>
+    private void PlayStartle() {
+        var walker = _animator.Client != null ? _animator.Client.GetComponent<WalkerV2>() : null;
+        if (walker != null && WalkerAggroSound?.GetValue(walker) is AudioEventRandom alert) {
+            alert.SpawnAndPlayOneShot(walker.transform.position);
+        }
+    }
+
     /// <summary>
     /// Update the animation for the given animator with the given clip name and wrap mode. This assumes that we need
     /// to replicate animation behaviour for a late update.
@@ -1614,6 +1786,26 @@ internal class Entity {
         }
     }
 
+    /// <summary>Whether this copy has sent its start-up presence events in this game.</summary>
+    private bool _announced;
+
+    /// <summary>
+    /// Sends, once, the presence register events the original sends at its start (CopyPresence): the copy's FSMs are
+    /// off, so this game's listeners (Sherma at the bone gate) never heard them.
+    /// </summary>
+    private void Announce() {
+        _announced = true;
+        foreach (var fsm in _fsms.Client) {
+            foreach (var state in fsm.FsmStates) {
+                foreach (var action in state.Actions) {
+                    if (action is SendEventToRegister send && CopyPresence.Announces(send.eventName?.Value)) {
+                        EventRegister.SendEvent(send.eventName!.Value);
+                    }
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Updates whether the game object for the client entity is active.
     /// </summary>
@@ -1622,6 +1814,7 @@ internal class Entity {
         if (Object.Client != null) {
             //Logger.Info($"Entity '{Object.Client.name}' received active: {active}");
             Object.Client.SetActive(active);
+            if (active && _isControlled && !_announced) Announce();
         } else {
             //Logger.Warn($"Entity ({Id}, {Type}) could not update active, because client object is null");
         }
@@ -1632,8 +1825,44 @@ internal class Entity {
     /// </summary>
     /// <param name="entityNetworkData">A list of data to update the client entity with.</param>
     /// <param name="alreadyInSceneUpdate">Whether this data is from an already in scene update.</param>
-    public void UpdateData(List<EntityNetworkData> entityNetworkData, bool alreadyInSceneUpdate) {
-        foreach (var data in entityNetworkData) {
+    /// <returns>(coop) The index the data stopped at for the next frame, with a death still to come
+    /// (DeathOrder.WaitsForBox); -1 when all was applied.</returns>
+    public int UpdateData(List<EntityNetworkData> entityNetworkData, bool alreadyInSceneUpdate) {
+        var death = entityNetworkData.FindIndex(d => d.Type == EntityComponentType.Death);
+        var lastBox = death < 0
+            ? -1
+            : entityNetworkData.FindLastIndex(death, d => d.Type == EntityComponentType.DamageHero);
+        for (var i = 0; i < entityNetworkData.Count; i++) {
+            var data = entityNetworkData[i];
+            if (death >= 0 && _isControlled &&
+                DeathOrder.WaitsForBox(i, lastBox, death, BoxOnFrame(), Time.frameCount)) {
+                return i;
+            }
+
+            if (data.Type == EntityComponentType.WalkEvent) {
+                // shortcut: a late player's catch-up holds only the last event (walking or running); send both if a
+                // copy is ever found in the wrong one
+                if (!_isControlled || data.Packet.Length != 1 || !CopiesWalkEvents()) continue;
+                var walker = Object.Client != null ? Object.Client.GetComponent<WalkerV2>() : null;
+                if (walker == null) continue;
+                var (running, on) = WalkEvents.Decode(data.Packet.ReadByte());
+                var silent = SilentLoops(Object.Client);
+                (running ? walker.OnRunning : walker.OnWalking)?.Invoke(on);
+                MarkAwakeLoops(silent);
+                continue;
+            }
+
+            if (data.Type == EntityComponentType.BonePress) {
+                PressSentBone(data, alreadyInSceneUpdate);
+                continue;
+            }
+
+            if (data.Type == EntityComponentType.Startle) {
+                // a late entry's catch-up holds the last one, long played
+                if (_isControlled && !alreadyInSceneUpdate && PlaysStartleSound()) PlayStartle();
+                continue;
+            }
+
             if (data.Type == EntityComponentType.ChildAnimation) {
                 if (!_isControlled || !_hasParent || data.Packet.Length != 8) continue;
                 var epoch = data.Packet.ReadUInt();
@@ -1723,7 +1952,14 @@ internal class Entity {
                 MusicComponent.Instance?.Update(data, alreadyInSceneUpdate);
             }
         }
+
+        return -1;
     }
+
+    /// <summary>(coop) The frame the scene host's data last turned a hurt box of the copy on, or -1.</summary>
+    private int BoxOnFrame() =>
+        _components.TryGetValue(EntityComponentType.DamageHero, out var component) &&
+        component is DamageHeroComponent damage ? damage.BoxOnFrame : -1;
 
     /// <summary>
     /// Update the FSMs of the host entity to prepare for host transfer or disconnects.
@@ -1766,6 +2002,11 @@ internal class Entity {
                     // Also propagate this state change to the EntityFsmActions class with the client FSM for the
                     // same index
                     EntityFsmActions.RegisterStateChange(_fsms.Client[fsmIndex].Fsm, stateName);
+                    // (coop) a copy made after the scene host's silk spawned shows it once it learns of the state
+                    // that has it out (LateSilk): whoever enters a praying Pilgrim's room second saw no strands
+                    if (LateSilk.Spawns()) EntityFsmActions.ShowLateSilk(_fsms.Client[fsmIndex].Fsm, stateName);
+                    // (coop) and the state's in-state particles a late copy never got the play of (LateEffects)
+                    if (LateEffects.Plays()) EntityFsmActions.PlayLateEffects(_fsms.Client[fsmIndex].Fsm, stateName);
                 }
             }
 
@@ -1865,6 +2106,15 @@ internal class Entity {
     /// </summary>
     public void Destroy() {
         MonoBehaviourUtil.Instance.OnUpdateEvent -= OnUpdate;
+        LetGoBones();
+        // (coop) by reference: on a room change the original is already destroyed, and Unity's != null would keep its
+        // entry (and this whole Entity) in CopyPresses for the rest of the session
+        if (!ReferenceEquals(Object.Host, null)) CopyPresses.Stop(Object.Host);
+
+        if (_hostWalker != null) {
+            if (_onWalking != null) _hostWalker.OnWalking?.RemoveListener(_onWalking);
+            if (_onRunning != null) _hostWalker.OnRunning?.RemoveListener(_onRunning);
+        }
 
         _spriteAnimatorPlayHook?.Dispose();
         _spriteAnimatorPlayHook = null;

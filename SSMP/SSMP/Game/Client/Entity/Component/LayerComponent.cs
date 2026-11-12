@@ -10,7 +10,10 @@ namespace SSMP.Game.Client.Entity.Component;
 /// and as its FSM changes it; the other games keep it (one that comes into the room later gets the last from the
 /// server); and a game that takes the room over gives it to the original. The Dock Guard Slasher's FSM gives him his
 /// fighting layer only at his intro's end, which the hidden original never ran, so after a take-over the floor did not
-/// hold him: he fell out of the room and died (all ten fights of round three's probe).
+/// hold him: he fell out of the room and died (all ten fights of round three's probe). (0.3.21) The copy here takes
+/// the scene host's layer too as it arrives: a wave enemy the room's game holds back in the background (Bone_01's
+/// Wave 2 Bone Goomba, Ignore Raycast in its BG Hiding) kept its Enemies layer here, so the other player saw it as a
+/// live enemy and killed it (probe_wave_copy).
 internal class LayerComponent : EntityComponent {
     /// <summary>
     /// Scene host: the layer last sent, -1 before the first.
@@ -60,6 +63,12 @@ internal class LayerComponent : EntityComponent {
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void TakesHostLayer(GameObject original, int layer) => original.layer = layer;
 
+    /// <summary>
+    /// (coop, 0.3.21) The copy here gets the scene host's layer for the enemy. Not inlined: wave_copy's twin skips it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CopyTakesHostLayer(GameObject copy, int layer) => copy.layer = layer;
+
     /// <inheritdoc />
     public override void Update(EntityNetworkData data, bool alreadyInSceneUpdate) {
         if (!IsControlled) {
@@ -67,6 +76,9 @@ internal class LayerComponent : EntityComponent {
         }
 
         _hostLayer = data.Packet.ReadByte();
+        if (GameObject.Client != null) {
+            CopyTakesHostLayer(GameObject.Client, _hostLayer.Value);
+        }
     }
 
     /// <inheritdoc />

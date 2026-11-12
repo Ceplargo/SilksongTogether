@@ -82,6 +82,11 @@ internal partial class GamePatcher {
     private static readonly ConditionalWeakTable<AlertRange, BoxedBool> NonAcquiringAlertRanges = [];
 
     /// <summary>
+    /// (coop) Cache mapping AlertRange instances to whether they belong to an NPC (NpcRangeSeesLocalHeroOnly).
+    /// </summary>
+    private static readonly ConditionalWeakTable<AlertRange, BoxedBool> NpcAlertRanges = [];
+
+    /// <summary>
     /// Cache mapping AlertRange instances to their CachedCollider to avoid frame-by-frame GetComponent allocations.
     /// Uses ConditionalWeakTable to prevent memory leaks from keeping alive AlertRange instances that should be GC'ed.
     /// </summary>
@@ -165,6 +170,12 @@ internal partial class GamePatcher {
     /// <param name="self">The alert range being queried.</param>
     /// <returns>True when the relevant tracked player is inside this alert range and visible; otherwise false.</returns>
     private static bool OnAlertRangeIsHeroInRange(AlertRange self) {
+        // (coop) An NPC's range sees the local hero only, as in the game alone: a friend walking up to Shakra started
+        // her first meeting in every game and held each game's hero (0.3.21, 2026-11-07)
+        if (NpcRangeSeesLocalHeroOnly(self)) {
+            return self.isHeroInRange;
+        }
+
         var owner = GetEnemyTargetOwner(self.gameObject);
         // A range with no enemy above it (a boss arena's start range) has no target to approve, so it would never
         // see anyone: it simply watches for any player, like a detached range
@@ -197,6 +208,20 @@ internal partial class GamePatcher {
         }
 
         return approvedTargetIsValid;
+    }
+
+    /// <summary>
+    /// (coop) Whether an alert range belongs to an NPC (an <see cref="NPCControlBase"/> on it or above it), so it sees only
+    /// the local hero. Cached per range, as the hook runs every frame.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
+    internal static bool NpcRangeSeesLocalHeroOnly(AlertRange range) {
+        if (!NpcAlertRanges.TryGetValue(range, out var boxed)) {
+            boxed = new BoxedBool { Value = range.GetComponentInParent<NPCControlBase>(true) != null };
+            NpcAlertRanges.Add(range, boxed);
+        }
+
+        return boxed.Value;
     }
 
     /// <summary>

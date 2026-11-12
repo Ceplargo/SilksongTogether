@@ -99,6 +99,8 @@ internal static class EntityRegistry {
         [NotNullWhen(true)] out EntityRegistryEntry? foundEntry
     ) {
         foundEntry = null;
+        // (coop) the Rock Rollers wish's scent piles are no enemy, though their names and FSMs match its entry
+        if (ScentPiles.Excludes() && ScentPiles.IsPile(gameObject.name)) return false;
         var longestBaseName = 0;
 
         // GetComponents<T>() allocates a new array each call. We defer it until we encounter

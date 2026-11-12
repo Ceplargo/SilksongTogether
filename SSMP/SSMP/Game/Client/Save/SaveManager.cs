@@ -134,6 +134,28 @@ internal class SaveManager {
     /// </summary>
     private Hook? _saveGameHook;
 
+    /// <summary>(coop, 0.3.21) The hook that sends this game's semi-persistent resets (<see cref="ResetSemiEverywhere"/>).
+    /// </summary>
+    private Hook? _resetSemiHook;
+
+    /// <summary>(coop, 0.3.21) The game whose room saves send a shared enemy id's death (<see cref="OnRoomSaved"/>).
+    /// </summary>
+    private global::GameManager? _roomSaves;
+
+    /// <summary>(coop, 0.3.21) The shared enemy ids of a room save (id, enemies, semi) and whether this game was the
+    /// room's scene host, read on the next update (<see cref="SendRoomSavedDeaths"/>), or null.</summary>
+    private (Dictionary<PersistentItemKey, (int n, bool semi)> ids, bool host)? _roomSaved;
+
+    /// <summary>(coop, 0.3.21) The room's enemy ids two or more enemies share (how many, semi-persistent), noted as
+    /// the room is watched: at its leave a killed enemy's own object is gone (the both-killed probe, f8b03dd).</summary>
+    private readonly Dictionary<PersistentItemKey, (int n, bool semi)> _roomShared = new();
+
+    /// <summary>(coop, 0.3.21) Another game's reset arrived: this game runs its own once, next update.</summary>
+    private bool _semiResetDue;
+
+    /// <summary>(coop, 0.3.21) This game runs a reset another game sent: not sent again.</summary>
+    private bool _applyingSemiReset;
+
     /// <summary>
     /// PlayerData instance that contains the last values of the currently used PlayerData for comparison checking.
     /// </summary>
@@ -233,6 +255,14 @@ internal class SaveManager {
         } catch (Exception e) {
             Logger.Error($"Could not hook the game's save, a friend's game saves into its own folder as before:\n{e}");
         }
+        try {
+            _resetSemiHook ??= new Hook(
+                typeof(global::GameManager).GetMethod(nameof(global::GameManager.ResetSemiPersistentItems))!,
+                ResetSemiEverywhere
+            );
+        } catch (Exception e) {
+            Logger.Error($"Could not hook the game's semi-persistent reset, a death or bench resets this game only:\n{e}");
+        }
         MonoBehaviourUtil.Instance.OnUpdateEvent += ClaimHooks.OnUpdate;
         MonoBehaviourUtil.Instance.OnUpdateEvent += OnUpdatePlayerData;
         MonoBehaviourUtil.Instance.OnUpdateEvent += OnUpdatePersistents;
@@ -252,6 +282,10 @@ internal class SaveManager {
         FleaCampSeats.Deregister();
         _saveGameHook?.Dispose();
         _saveGameHook = null;
+        _resetSemiHook?.Dispose();
+        _resetSemiHook = null;
+        if (_roomSaves != null) _roomSaves.SavePersistentObjects -= OnRoomSaved;
+        _roomSaves = null;
         MonoBehaviourUtil.Instance.OnUpdateEvent -= OnUpdatePlayerData;
         MonoBehaviourUtil.Instance.OnUpdateEvent -= OnUpdatePersistents;
         MonoBehaviourUtil.Instance.OnUpdateEvent -= OnUpdateCompounds;
@@ -458,8 +492,15 @@ internal class SaveManager {
     private void OnSceneChanged(Scene oldScene, Scene newScene) {
         _persistentFsmData.Clear();
         _seenPersistents.Clear();
+        _roomShared.Clear();
         _persistentScene = newScene;
         WatchPersistents(newScene);
+
+        // (coop, 0.3.21) joined again after the room's items (their Awake joined it as the room loaded), so its turn
+        // comes after theirs; shortcut: an enemy brought out later saves after it, fine while shared ids are out at load
+        if (_roomSaves != null) _roomSaves.SavePersistentObjects -= OnRoomSaved;
+        _roomSaves = global::GameManager.instance;
+        if (_roomSaves != null) _roomSaves.SavePersistentObjects += OnRoomSaved;
     }
 
     /// <summary>
@@ -493,7 +534,16 @@ internal class SaveManager {
                 PersistentItemKey = persistentItemData,
                 Owner = geoRock,
                 GetCurrentInt = () => fsmInt.Value,
-                SetCurrentInt = value => fsmInt.Value = value,
+                // (coop, 0.3.21) an arrived 0 on a rock still standing here breaks it as the game's BreakFromBreaker
+                // does, its last hit sent as TAKE DAMAGE (only Hits set to 0, it stayed in Idle)
+                SetCurrentInt = value => {
+                    if (GeoRockHold.Breaks(fsmInt.Value, value)) {
+                        fsmInt.Value = 1;
+                        fsm.SendEvent("TAKE DAMAGE");
+                    } else {
+                        fsmInt.Value = value;
+                    }
+                },
                 LastIntValue = fsmInt.Value
             };
 
@@ -522,7 +572,16 @@ internal class SaveManager {
             if (fsm) {
                 var fsmBool = fsm.FsmVariables.GetFsmBool("Activated");
                 getCurrentBoolFunc = () => fsmBool.Value;
-                setCurrentBoolAction = value => fsmBool.Value = value;
+                setCurrentBoolAction = value => {
+                    var before = fsmBool.Value;
+                    fsmBool.Value = value;
+                    // (coop, 0.3.21) a break from another game breaks the live object its own way (ArrivedBreaks)
+                    var state = fsm.Fsm?.ActiveState;
+                    if (state != null && ArrivedBreaks.Sends(fsm.gameObject.name, value, before, state.Transitions.Select(t => t.EventName))) {
+                        Logger.Info($"Arrived break sent to {fsm.gameObject.name}'s {fsm.FsmName} in {state.Name}");
+                        fsm.SendEvent("BREAK");
+                    }
+                };
             }
 
             var vinePlatform = itemObject.GetComponent<VinePlatform>();
@@ -549,18 +608,122 @@ internal class SaveManager {
                 setCurrentBoolAction = value => dreamPlantOrb.pickedUp = value;
             }
 
+            // A lever another player turned on plays its own hit here (its sound, then its gates' opening sequence);
+            // loading the value jumped its gates open with none (0.3.21, Bone_01's Great Bone Gate)
+            var lever = itemObject.GetComponent<Lever_tk2d>();
+            if (lever) {
+                getCurrentBoolFunc = persistentBoolItem.GetCurrentValue;
+                setCurrentBoolAction = value => {
+                    var action = lever.isActiveAndEnabled
+                        ? PersistentApply.ForLever(value, LeverHit.IsActivated(lever))
+                        : LeverArrival.Load;
+                    if (action == LeverArrival.Hit) {
+                        LeverHit.Play(lever);
+                    } else if (action == LeverArrival.Load) {
+                        persistentBoolItem.PreSetup();
+                    }
+                };
+            }
+
+            // (0.3.21 Task 8) the other lever class the same: its own hit, once (Bone_08's lever)
+            var plainLever = itemObject.GetComponent<Lever>();
+            if (plainLever) {
+                getCurrentBoolFunc = persistentBoolItem.GetCurrentValue;
+                setCurrentBoolAction = value => {
+                    var action = plainLever.isActiveAndEnabled
+                        ? PersistentApply.ForLever(value, LeverHit.IsActivated(plainLever))
+                        : LeverArrival.Load;
+                    if (action == LeverArrival.Hit) {
+                        LeverHit.Play(plainLever);
+                    } else if (action == LeverArrival.Load) {
+                        persistentBoolItem.PreSetup();
+                    }
+                };
+            }
+
             // Any other saved object (pickups, levers, ...): read it as the game does, and apply an arriving value
             // through the game's own loading, from the value stored in SceneData
             if (getCurrentBoolFunc == null || setCurrentBoolAction == null) {
                 getCurrentBoolFunc = persistentBoolItem.GetCurrentValue;
-                setCurrentBoolAction = _ => persistentBoolItem.PreSetup();
+                setCurrentBoolAction = _ => {
+                    if (LoadsArrivedObjects()) persistentBoolItem.PreSetup();
+                };
+            }
+
+            // (coop, 0.3.21) an enemy another game killed: its copy here never runs its own Die (HealthManager.isDead
+            // stays false), so leaving the room saved it alive over the arrived death (Bone_04's Rock Roller); the
+            // arrived death overrides the item's value, which its save then keeps (a semi-persistent reset still
+            // sets it back)
+            if (itemObject.GetComponent<HealthManager>()) {
+                var load = setCurrentBoolAction;
+                setCurrentBoolAction = value => {
+                    load(value);
+                    if (value && KeepsArrivedDeaths()) persistentBoolItem.SetValueOverride(true);
+                };
+            }
+
+            // A gate its own lever here is opening keeps its sequence: the other game's value, sent as that game's
+            // sequence started, loaded it open mid-way (0.3.21, Bone_04's Bone Gate)
+            var openingLever = LeverHit.LeverOf(itemObject);
+            var openingPlain = LeverHit.PlainLeverOf(itemObject);
+            if (openingLever || openingPlain) {
+                var load = setCurrentBoolAction;
+                setCurrentBoolAction = value => {
+                    var leverOn = openingLever
+                        ? LeverHit.IsActivated(openingLever!)
+                        : openingPlain && LeverHit.IsActivated(openingPlain!);
+                    if (!PersistentApply.LeftToItsLever(value, leverOn)) {
+                        load(value);
+                    }
+                };
+            }
+
+            // A wave arena running or ending here keeps its own end: the other game's win, loaded, completed it at
+            // once with a quick gate open (0.3.21, Bone_18's arena)
+            var battle = itemObject.GetComponent<BattleScene>();
+            System.Action? arenaTick = null;
+            if (battle) {
+                var loadWin = setCurrentBoolAction;
+                var held = new ArenaWinHold();
+                setCurrentBoolAction = value => {
+                    if (!PersistentApply.LeftToItsArena(value, battle && ArenaState.Started(battle), battle && ArenaState.Done(battle))) {
+                        loadWin(value);
+                    } else if (value && ArenaWinHold.Loads()) {
+                        held.Left(Time.unscaledTime);
+                        Logger.Info($"Arena {persistentItemData} left to its own end: started {ArenaState.Started(battle)}, completed {ArenaState.Done(battle)}");
+                    }
+                };
+                // with the room's win message missing, a left win is loaded after all (arena_after, 0.3.21)
+                arenaTick = () => {
+                    if (battle && held.Due(Time.unscaledTime, ArenaState.Done(battle))) {
+                        // the win's stored value may have gone back to this game's own since it came (a run's held load
+                        // read it false and left the arena running): stored again before the game's own load reads it
+                        var bools = SceneData.instance.PersistentBools;
+                        var stored = bools.TryGetValue(persistentItemData.SceneName, persistentItemData.Id, out var saved) && saved.Value;
+                        Logger.Info($"Arena {persistentItemData} not ending {ArenaWinHold.GraceS} s after the other game's win: loaded (started {ArenaState.Started(battle)}, its stored win {stored})");
+                        if (ArenaWinHold.StoresAgain()) {
+                            if (saved != null) {
+                                saved.Value = true;
+                            } else {
+                                bools.SetValue(new PersistentItemData<bool> { ID = persistentItemData.Id, SceneName = persistentItemData.SceneName, Value = true });
+                            }
+                        }
+                        loadWin(true);
+                        Logger.Info($"Arena {persistentItemData} after the load: started {ArenaState.Started(battle)}, completed {ArenaState.Done(battle)}");
+                    }
+                };
             }
 
             var persistentFsmData = new PersistentFsmData {
                 PersistentItemKey = persistentItemData,
                 Owner = persistentBoolItem,
+                Semi = persistentBoolItem.GetIsSemiPersistent(),
+                Enemies = itemObject.GetComponent<HealthManager>()
+                    ? EnemiesWithId(persistentItemData.Id, persistentItemData.SceneName)
+                    : 0,
                 GetCurrentBool = getCurrentBoolFunc,
                 SetCurrentBool = setCurrentBoolAction,
+                Tick = arenaTick,
                 LastBoolValue = SceneData.instance.PersistentBools.TryGetValue(
                     persistentItemData.SceneName,
                     persistentItemData.Id,
@@ -572,6 +735,9 @@ internal class SaveManager {
             };
 
             _persistentFsmData.Add(persistentFsmData);
+            if (persistentFsmData.Enemies > 1) {
+                _roomShared[persistentItemData] = (persistentFsmData.Enemies, persistentFsmData.Semi);
+            }
         }
 
         foreach (var persistentIntItem in Object.FindObjectsByType<PersistentIntItem>(FindObjectsSortMode.None)) {
@@ -588,12 +754,38 @@ internal class SaveManager {
 
             Logger.Info($"Found persistent int in scene: {persistentItemData}");
 
-            // Read it as the game does, and apply an arriving value through the game's own loading
+            // Read it as the game does, and apply an arriving value through the game's own loading; (0.3.21) a live
+            // StateChangeSequence behind it plays its states as the doer's game did (PersistentApply.ForSequence)
+            var sequence = itemObject.GetComponent<StateChangeSequence>();
+            var holder = itemObject.GetComponent<BreakableHolder>();
+            var cache = RosaryHits.CacheOf(persistentIntItem);
             var persistentFsmData = new PersistentFsmData {
                 PersistentItemKey = persistentItemData,
                 Owner = persistentIntItem,
+                Semi = persistentIntItem.GetIsSemiPersistent(),
                 GetCurrentInt = persistentIntItem.GetCurrentValue,
-                SetCurrentInt = _ => persistentIntItem.PreSetup(),
+                SetCurrentInt = value => {
+                    // (0.3.21) a live BreakableHolder with more hits left plays the doer's hits (PersistentApply.ForHolder)
+                    if (holder && PersistentApply.ForHolder(value, HolderHits.Left(holder), holder.isActiveAndEnabled)) {
+                        HolderHits.Play(holder, value);
+                        return;
+                    }
+
+                    // (0.3.21) a live RosaryCache with fewer hits is owed the doer's (PersistentApply.ForCache)
+                    if (cache && PersistentApply.ForCache(value, RosaryHits.State(cache!), cache!.isActiveAndEnabled)) {
+                        RosaryHits.Owe(cache!, value);
+                        return;
+                    }
+
+                    var action = sequence
+                        ? PersistentApply.ForSequence(value, SequenceState(sequence), sequence.isActiveAndEnabled)
+                        : SequenceArrival.Load;
+                    if (action == SequenceArrival.Play) {
+                        sequence.SetState(value);
+                    } else if (action == SequenceArrival.Load) {
+                        persistentIntItem.PreSetup();
+                    }
+                },
                 LastIntValue = SceneData.instance.PersistentInts.TryGetValue(
                     persistentItemData.SceneName,
                     persistentItemData.Id,
@@ -606,6 +798,10 @@ internal class SaveManager {
             _persistentFsmData.Add(persistentFsmData);
         }
     }
+
+    /// <summary>(0.3.21) A StateChangeSequence's state now (its stateValue, what its PersistentIntItem saves).</summary>
+    private static readonly HarmonyLib.AccessTools.FieldRef<StateChangeSequence, int> SequenceState =
+        HarmonyLib.AccessTools.FieldRefAccess<StateChangeSequence, int>("stateValue");
 
     /// <summary>
     /// Checks if a save update should be sent and send it using the encode function to encode the value of the
@@ -690,6 +886,13 @@ internal class SaveManager {
         orig(self, saveSlot, callback, withAutoSave, autoSaveName);
     }
 
+    /// <summary>
+    /// (coop, 0.3.21) Whether an arriving value of a saved object with no handler of its own (a pickup taken in the
+    /// other game) loads here at once, through the game's own load.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // pickups_at_once's twin switches it off with a patch
+    private static bool LoadsArrivedObjects() => true;
+
     /// <summary>(coop) Whether a friend's game skips its own saves while in the host's world.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
     private static bool SkipsFriendSaves() => true;
@@ -728,7 +931,51 @@ internal class SaveManager {
     /// as Library_13, and at a join after leaving a room for the main menu).
     /// </summary>
     private void DropDestroyedPersistents() =>
-        _persistentFsmData.RemoveAll(data => data?.Owner is { } owner && owner == null);
+        _persistentFsmData.RemoveAll(data => {
+            if (data?.Owner is not { } owner || owner != null) return false;
+            // a bool whose object went in the frame it changed: its stored change still goes out (DroppedChange)
+            if (!data.IsInt && SceneData.instance != null) {
+                var has = SceneData.instance.PersistentBools.TryGetValue(data.PersistentItemKey.SceneName, data.PersistentItemKey.Id, out var stored);
+                if (DroppedChange.Of(has, has && stored.Value, data.LastBoolValue) is { } change) {
+                    Logger.Info($"Dropped destroyed {data.PersistentItemKey}: stored {change}, last compared {data.LastBoolValue}");
+                    if (DroppedChange.Sends()) SendBoolChange(data, change);
+                }
+            }
+            return true;
+        });
+
+    /// <summary>
+    /// (coop, 0.3.21) This game's death or bench rest resets its semi-persistent values (killed Pilgrims) as the game
+    /// alone does; first each synced one goes out as a reset, so the server drops it and every other game runs its own
+    /// reset (live items too) and the players' games bring them back alike (probe_kill_save: only the resting or dying
+    /// player's game had).
+    /// </summary>
+    private void ResetSemiEverywhere(Action<global::GameManager> orig, global::GameManager self) {
+        if (!_applyingSemiReset && _netClient.IsConnected && SemiPersistence.AsAlone() && SceneData.instance != null) {
+            var resets = new List<(ushort, byte[])>();
+            SceneData.instance.PersistentBools.Mutate(item => {
+                var key = new PersistentItemKey { Id = item.ID, SceneName = item.SceneName };
+                if (item.IsSemiPersistent && SaveDataMapping.PersistentBoolVarProperties.TryGetValue(key, out var props) &&
+                    props.Sync && SaveDataMapping.PersistentBoolIndices.TryGetValue(key, out var index)) {
+                    resets.Add((index, SemiPersistence.ResetOf((byte) (item.Value ? 1 : 0))));
+                }
+            });
+            SceneData.instance.PersistentInts.Mutate(item => {
+                var key = new PersistentItemKey { Id = item.ID, SceneName = item.SceneName };
+                if (item.IsSemiPersistent && SaveDataMapping.PersistentIntVarProperties.TryGetValue(key, out var props) &&
+                    props.Sync && SaveDataMapping.PersistentIntIndices.TryGetValue(key, out var index)) {
+                    resets.Add((index, SemiPersistence.ResetOf((byte) item.Value)));
+                }
+            });
+            foreach (var (index, value) in resets) {
+                SendSaveUpdate(index, value, "");
+            }
+
+            Logger.Info($"Semi-persistent values reset in this game: {resets.Count} sent as resets");
+        }
+
+        orig(self);
+    }
 
     /// <summary>
     /// Whether saved objects that come out after the scene loaded are watched too.
@@ -736,11 +983,129 @@ internal class SaveManager {
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
     private static bool TracksLateItems() => true;
 
+    /// <summary>(coop, 0.3.21) Whether an enemy another game killed keeps its arrived death in this game's save. Not
+    /// inlined: the enemy sweep's twin (--skip-save) skips it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool KeepsArrivedDeaths() => true;
+
+    /// <summary>(coop, 0.3.21) How many enemies of the loaded rooms save under this id (SSMP's copies have their own).</summary>
+    private static int EnemiesWithId(string id, string scene) {
+        var n = 0;
+        foreach (var item in Object.FindObjectsByType<PersistentBoolItem>(FindObjectsInactive.Include,
+                     FindObjectsSortMode.None)) {
+            if (item.ItemData.ID == id && item.ItemData.SceneName == scene && item.GetComponent<HealthManager>()) n++;
+        }
+
+        return n;
+    }
+
+    /// <summary>
+    /// (coop, 0.3.21) The game saves the room (GameManager.SavePersistentObjects: leaving it, a hazard respawn or a
+    /// bench save; a hook on SaveLevelState never ran at a leave): its enemies' ids and this game's scene host role are
+    /// noted, and the next update sends the shared ones' deaths (<see cref="SendRoomSavedDeaths"/>). Read here, the
+    /// value came from before the room's enemies saved (this handler ran first: the both-killed probe sent one leave
+    /// late).
+    /// </summary>
+    private void OnRoomSaved() {
+        if (!_netClient.IsConnected || SceneData.instance == null) return;
+
+        // noted as the room was watched: a killed enemy's own object is gone by its leave (only SSMP's copies were found)
+        var shared = new Dictionary<PersistentItemKey, (int n, bool semi)>(_roomShared);
+        _roomSaved = (shared, _entityManager.IsSceneHost);
+    }
+
+    /// <summary>
+    /// (coop, 0.3.21) After a room save (<see cref="OnRoomSaved"/>), as the room's scene host: an enemy id two or more
+    /// enemies share goes out if its saved value is a death (both killed), the value a game alone keeps; its kill was
+    /// held (<see cref="SemiPersistence.HoldsKill"/>), and a False is never sent.
+    /// </summary>
+    private void SendRoomSavedDeaths() {
+        if (_roomSaved is not { } room) return;
+        var (shared, host) = room;
+        _roomSaved = null;
+        if (!_netClient.IsConnected || SceneData.instance == null) return;
+
+        foreach (var (key, (n, semi)) in shared) {
+            var stored = SceneData.instance.PersistentBools.TryGetValue(key.SceneName, key.Id, out var saved) &&
+                         saved.Value;
+            if (!SemiPersistence.SendsLeave(n, stored, host) ||
+                !SaveDataMapping.PersistentBoolVarProperties.TryGetValue(key, out var props) || !props.Sync ||
+                !SaveDataMapping.PersistentBoolIndices.TryGetValue(key, out var index)) continue;
+            Logger.Info($"Sending the room's saved death of {key} ({n} enemies share the id)");
+            SendSaveUpdate(
+                index, SemiPersistence.Encode(1, semi && SemiPersistence.AsAlone()),
+                ClaimHooks.MarkerFor(null, false, $"{key.SceneName}:{key.Id}")
+            );
+        }
+    }
+
+    /// <summary>A saved bool's new value: logged, kept as the last compared, and sent if it is synced.</summary>
+    private void SendBoolChange(PersistentFsmData data, bool value) {
+        data.LastBoolValue = value;
+
+        var itemData = data.PersistentItemKey;
+
+        Logger.Info($"Value for {itemData} changed to: {value}");
+
+        if (!_netClient.IsConnected) {
+            return;
+        }
+
+        if (SemiPersistence.HoldsKill(data.Enemies)) {
+            Logger.Info($"Held to the room's save: {itemData} ({data.Enemies} enemies share the id)");
+            return;
+        }
+
+        if (!SaveDataMapping.PersistentBoolVarProperties.TryGetValue(itemData, out var varProps) ||
+            !varProps.Sync) {
+            Logger.Info(
+                $"Not in persistent bool save data values or false in sync props, not sending save update ({itemData.Id}, {itemData.SceneName})"
+            );
+            return;
+        }
+
+        // If we should do the scene host check and the player is not scene host, skip sending
+        if (!varProps.IgnoreSceneHost && !_entityManager.IsSceneHost) {
+            Logger.Info(
+                $"Not scene host, not sending persistent bool save update ({itemData.Id}, {itemData.SceneName})"
+            );
+            return;
+        }
+
+        if (!SaveDataMapping.PersistentBoolIndices.TryGetValue(itemData, out var index)) {
+            Logger.Info(
+                $"Cannot find persistent bool save data index, not sending save update ({itemData.Id}, {itemData.SceneName})"
+            );
+            return;
+        }
+
+        Logger.Info($"Sending persistent bool ({itemData.Id}, {itemData.SceneName}) as save update");
+
+        SendSaveUpdate(
+            index, SemiPersistence.Encode((byte) (value ? 1 : 0), data.Semi && SemiPersistence.AsAlone()),
+            ClaimHooks.MarkerFor(null, false, $"{itemData.SceneName}:{itemData.Id}")
+        );
+    }
+
     /// <summary>
     /// Called every unity update. Used to check for changes in the GeoRock/PersistentInt/PersistentBool FSMs.
     /// </summary>
     private void OnUpdatePersistents() {
+        SendRoomSavedDeaths();
         DropDestroyedPersistents();
+
+        // (coop, 0.3.21) another game's death or bench rest: this game resets as its own would, live items too (the
+        // game alone's ResetSemiPersistentObjects), once for the burst of values
+        if (_semiResetDue && global::GameManager.instance is { } gameManager) {
+            _semiResetDue = false;
+            _applyingSemiReset = true;
+            try {
+                gameManager.ResetSemiPersistentItems();
+                Logger.Info("Semi-persistent values reset as another game's death or bench rest did");
+            } finally {
+                _applyingSemiReset = false;
+            }
+        }
 
         using var enumerator = _persistentFsmData.GetEnumerator();
 
@@ -750,8 +1115,17 @@ internal class SaveManager {
                 continue;
             }
 
+            persistentFsmData.Tick?.Invoke();
+
             if (persistentFsmData.IsInt) {
                 var value = persistentFsmData.GetCurrentInt.Invoke();
+                if (persistentFsmData.Held.Due(Time.unscaledTime, value) is { } held) {
+                    Logger.Info($"Geo rock {persistentFsmData.PersistentItemKey} set to the scene host's {held} (this game had {value})");
+                    persistentFsmData.SetCurrentInt.Invoke(held);
+                    persistentFsmData.LastIntValue = held;
+                    continue;
+                }
+
                 if (value == persistentFsmData.LastIntValue) {
                     continue;
                 }
@@ -805,7 +1179,10 @@ internal class SaveManager {
 
                     Logger.Info($"Sending persistent int ({itemData.Id}, {itemData.SceneName}) as save update");
 
-                    SendSaveUpdate(index, [(byte) value], ClaimHooks.MarkerFor(null, false, $"{itemData.SceneName}:{itemData.Id}"));
+                    SendSaveUpdate(
+                        index, SemiPersistence.Encode((byte) value, persistentFsmData.Semi && SemiPersistence.AsAlone()),
+                        ClaimHooks.MarkerFor(null, false, $"{itemData.SceneName}:{itemData.Id}")
+                    );
                 } else {
                     Logger.Info("Cannot find persistent int/geo rock data bool, not sending save update");
                 }
@@ -815,44 +1192,7 @@ internal class SaveManager {
                     continue;
                 }
 
-                persistentFsmData.LastBoolValue = value;
-
-                var itemData = persistentFsmData.PersistentItemKey;
-
-                Logger.Info($"Value for {itemData} changed to: {value}");
-
-                if (!_netClient.IsConnected) {
-                    continue;
-                }
-
-                if (!SaveDataMapping.PersistentBoolVarProperties.TryGetValue(itemData, out var varProps) ||
-                    !varProps.Sync) {
-                    Logger.Info(
-                        $"Not in persistent bool save data values or false in sync props, not sending save update ({itemData.Id}, {itemData.SceneName})"
-                    );
-                    continue;
-                }
-
-                // If we should do the scene host check and the player is not scene host, skip sending
-                if (!varProps.IgnoreSceneHost && !_entityManager.IsSceneHost) {
-                    Logger.Info(
-                        $"Not scene host, not sending persistent bool save update ({itemData.Id}, {itemData.SceneName})"
-                    );
-                    continue;
-                }
-
-                if (!SaveDataMapping.PersistentBoolIndices.TryGetValue(itemData, out var index)) {
-                    Logger.Info(
-                        $"Cannot find persistent bool save data index, not sending save update ({itemData.Id}, {itemData.SceneName})"
-                    );
-                    continue;
-                }
-
-                Logger.Info($"Sending persistent bool ({itemData.Id}, {itemData.SceneName}) as save update");
-
-                SendSaveUpdate(
-                    index, BitConverter.GetBytes(value), ClaimHooks.MarkerFor(null, false, $"{itemData.SceneName}:{itemData.Id}")
-                );
+                SendBoolChange(persistentFsmData, value);
             }
         }
 
@@ -1102,6 +1442,7 @@ internal class SaveManager {
                 case bool decodedBool:
                     _lastPlayerData?.SetBool(name, decodedBool);
                     pd.SetBool(name, decodedBool);
+                    FleaArrival.Apply(name, decodedBool);
                     break;
                 case float decodedFloat:
                     _lastPlayerData?.SetFloat(name, decodedFloat);
@@ -1233,8 +1574,12 @@ internal class SaveManager {
                 var existingItemData = persistentFsmData.PersistentItemKey;
 
                 if (existingItemData.Id == itemData.Id && existingItemData.SceneName == itemData.SceneName) {
-                    persistentFsmData.SetCurrentInt.Invoke(value);
-                    persistentFsmData.LastIntValue = value;
+                    if (GeoRockHold.Holds()) {
+                        persistentFsmData.Held.Received(value, Time.unscaledTime);
+                    } else {
+                        persistentFsmData.SetCurrentInt.Invoke(value);
+                        persistentFsmData.LastIntValue = value;
+                    }
                 }
             }
 
@@ -1251,18 +1596,31 @@ internal class SaveManager {
             }
 
             var value = encodedValue[0] == 1;
+            var kind = SemiPersistence.KindOf(encodedValue);
 
-            Logger.Info($"Received persistent bool save update: {itemData.Id}, {itemData.SceneName}, {value}");
+            Logger.Info($"Received persistent bool save update: {itemData.Id}, {itemData.SceneName}, {value} (kind {kind})");
+
+            // (coop) another game's death or bench rest reset it: the room's next load has it back, as in that game
+            if (kind == SemiPersistence.Reset) {
+                sceneData.PersistentBools.Remove(itemData.SceneName, itemData.Id);
+                _semiResetDue = true;
+                return;
+            }
 
             // The game loads a room's objects from SceneData when the room is entered
             if (sceneData.PersistentBools.TryGetValue(itemData.SceneName, itemData.Id, out var savedBool)) {
                 savedBool.Value = value;
+                if (kind == SemiPersistence.Semi) savedBool.IsSemiPersistent = true;
             } else {
                 sceneData.PersistentBools.SetValue(
-                    new PersistentItemData<bool> { ID = itemData.Id, SceneName = itemData.SceneName, Value = value }
+                    new PersistentItemData<bool> {
+                        ID = itemData.Id, SceneName = itemData.SceneName, Value = value,
+                        IsSemiPersistent = kind == SemiPersistence.Semi
+                    }
                 );
             }
 
+            var matched = false;
             foreach (var persistentFsmData in _persistentFsmData) {
                 var existingItemData = persistentFsmData.PersistentItemKey;
 
@@ -1271,6 +1629,22 @@ internal class SaveManager {
                     persistentFsmData.SetCurrentBool.Invoke(value);
                     // What the object shows now: if it ignored the value, that must not go back out as a change
                     persistentFsmData.LastBoolValue = persistentFsmData.GetCurrentBool.Invoke();
+                    matched = true;
+                }
+            }
+
+            // (coop, 0.3.21) a following game keeps the original enemy switched off, which the scan of items skips:
+            // its own save on leaving the room wrote it alive over the arrived death (Bone_04's Rock Roller,
+            // e-arrived-green-p3-2), so the death is kept on it here
+            if (!matched && value && KeepsArrivedDeaths()) {
+                foreach (var item in Object.FindObjectsByType<PersistentBoolItem>(
+                             FindObjectsInactive.Include, FindObjectsSortMode.None
+                         )) {
+                    if (item.ItemData.ID == itemData.Id && item.ItemData.SceneName == itemData.SceneName &&
+                        item.GetComponent<HealthManager>()) {
+                        item.SetValueOverride(true);
+                        Logger.Info($"Arrived death kept on the switched-off ({itemData.Id}, {itemData.SceneName})");
+                    }
                 }
             }
 
@@ -1287,13 +1661,25 @@ internal class SaveManager {
                 value = -1;
             }
 
-            Logger.Info($"Received persistent int save update: {itemData.Id}, {itemData.SceneName}, {value}");
+            var kind = SemiPersistence.KindOf(encodedValue);
+
+            Logger.Info($"Received persistent int save update: {itemData.Id}, {itemData.SceneName}, {value} (kind {kind})");
+
+            if (kind == SemiPersistence.Reset) {
+                sceneData.PersistentInts.Remove(itemData.SceneName, itemData.Id);
+                _semiResetDue = true;
+                return;
+            }
 
             if (sceneData.PersistentInts.TryGetValue(itemData.SceneName, itemData.Id, out var savedInt)) {
                 savedInt.Value = value;
+                if (kind == SemiPersistence.Semi) savedInt.IsSemiPersistent = true;
             } else {
                 sceneData.PersistentInts.SetValue(
-                    new PersistentItemData<int> { ID = itemData.Id, SceneName = itemData.SceneName, Value = value }
+                    new PersistentItemData<int> {
+                        ID = itemData.Id, SceneName = itemData.SceneName, Value = value,
+                        IsSemiPersistent = kind == SemiPersistence.Semi
+                    }
                 );
             }
 
@@ -1484,22 +1870,23 @@ internal class SaveManager {
                 string id,
                 Dictionary<PersistentItemKey, SaveDataMapping.VarProperties> varProperties,
                 BiLookup<PersistentItemKey, ushort> indices,
-                byte value
+                byte value,
+                bool semi
             ) {
                 var key = new PersistentItemKey { Id = id, SceneName = sceneName };
                 if (varProperties.TryGetValue(key, out var varProps) && varProps.Sync && indices.TryGetValue(key, out var index)) {
-                    saveData[index] = [value];
+                    saveData[index] = SemiPersistence.Encode(value, semi && SemiPersistence.AsAlone());
                 }
             }
 
             SceneData.instance.PersistentBools.Mutate(item => AddWorldObject(
                 item.SceneName, item.ID, SaveDataMapping.PersistentBoolVarProperties,
-                SaveDataMapping.PersistentBoolIndices, (byte) (item.Value ? 1 : 0)
+                SaveDataMapping.PersistentBoolIndices, (byte) (item.Value ? 1 : 0), item.IsSemiPersistent
             ));
             // -1 travels as 255
             SceneData.instance.PersistentInts.Mutate(item => AddWorldObject(
                 item.SceneName, item.ID, SaveDataMapping.PersistentIntVarProperties,
-                SaveDataMapping.PersistentIntIndices, (byte) item.Value
+                SaveDataMapping.PersistentIntIndices, (byte) item.Value, item.IsSemiPersistent
             ));
         }
 

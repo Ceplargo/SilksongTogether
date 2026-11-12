@@ -47,6 +47,15 @@ internal static class ComplexFieldApplier {
 
         Refresh(fieldName);
         HidePickupsOfOwnedItems(fieldName);
+        // (coop, 0.3.21) another player's take of a followed drop's item (a Pilgrim Rag): this game's goes too
+        if (fieldName == "Collectables" && !snapshot) {
+            foreach (var (entry, members) in after) {
+                var was = before.TryGetValue(entry, out var old) && old.TryGetValue("Amount", out var known) ? known : 0;
+                if (members.TryGetValue("Amount", out var now) && now > was) {
+                    Entity.Component.ThrownComponent.HidesTakenDrops(entry, now - was);
+                }
+            }
+        }
     }
 
     /// <summary>

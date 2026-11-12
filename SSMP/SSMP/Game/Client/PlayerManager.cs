@@ -229,6 +229,10 @@ internal class PlayerManager : IPlayerManager {
         // Set up sprite flash. Must be deactivated beforehand to fill properties in awake
         playerPrefab.SetActive(false);
         var flash = playerPrefab.AddComponent<SpriteFlash>();
+        // (coop) the grass it goes through moves and sounds, as for this game's own hero
+        playerPrefab.AddComponent<RemoteGrass>();
+        // (coop, 0.3.21) what its touch sets off (bone bridges, tilting and dusty platforms) shows here too
+        playerPrefab.AddComponent<RemoteTouches>();
         flash.parents = [];
         flash.children = [];
 

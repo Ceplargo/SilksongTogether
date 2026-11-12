@@ -173,7 +173,7 @@ internal static partial class EntityFsmActions {
                 nameof(SpawnObjectFromGlobalPool.OnEnter),
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
             )!,
-            SpawnTold<SpawnObjectFromGlobalPool>
+            SpawnObjectFromGlobalPoolOnEnter
         );
         _spawnPoolOverTimeHook = new ILHook(
             typeof(SpawnObjectFromGlobalPoolOverTime).GetMethod(
@@ -336,6 +336,7 @@ internal static partial class EntityFsmActions {
 
         if (!AimFields.TryGetValue(type, out var fields)) {
             var spawns = type == typeof(SpawnObjectFromGlobalPoolDelay) || type == typeof(SpawnObjectFromGlobalPoolOverTime) ||
+                         type == typeof(SpawnObjectFromGlobalPoolOverTimeV2) ||
                          type.Name.StartsWith("FlingObjectsFromGlobalPool");
             fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public).Where(f =>
                 f.FieldType == typeof(FsmOwnerDefault) || f.FieldType == typeof(FsmEventTarget) ||
@@ -557,6 +558,35 @@ internal static partial class EntityFsmActions {
     }
 
     /// <summary>
+    /// (coop) IL edit for SpawnObjectFromGlobalPool.OnEnter: each spawn told (SpawnTold), and in the other games a
+    /// followed throw's own spawn left out before it spawns anything (ThrownComponent.SkipsOwnFling), its stored
+    /// object emptied so the state's next actions (the corpse's SetVelocity2d) find none.
+    /// </summary>
+    private static void SpawnObjectFromGlobalPoolOnEnter(ILContext il) {
+        SpawnTold<SpawnObjectFromGlobalPool>(il);
+        try {
+            var c = new ILCursor(il);
+            var spawns = c.DefineLabel();
+            c.Emit(OpCodes.Ldarg_0);
+            c.EmitDelegate<Func<SpawnObjectFromGlobalPool, bool>>(action => {
+                if (!SSMP.Game.Client.Entity.Component.ThrownComponent.SkipsOwnFling(
+                        action.Fsm?.GameObject, action.gameObject?.Value)) {
+                    return false;
+                }
+
+                if (action.storeObject != null) action.storeObject.Value = null;
+                action.Finish();
+                return true;
+            });
+            c.Emit(OpCodes.Brfalse, spawns);
+            c.Emit(OpCodes.Ret);
+            c.MarkLabel(spawns);
+        } catch (Exception e) {
+            Logger.Error($"Could not change SpawnObjectFromGlobalPool#OnEnter IL:\n{e}");
+        }
+    }
+
+    /// <summary>
     /// (coop) IL edit for a pool spawn action: each object it spawns (after each ObjectPoolExtensions.Spawn call) told to
     /// ThrownComponent.Flung with the object whose FSM spawned it.
     /// </summary>
@@ -604,6 +634,8 @@ internal static partial class EntityFsmActions {
     public static void RegisterStateChange(HutongGames.PlayMaker.Fsm fsm, string stateName) {
         //Logger.Debug($"RegisterStateChange: {fsm.Name}, {stateName}");
 
+        // (coop) the entered state's own plays registered already: an emitter it plays too is left playing (InStateStops)
+        var registered = ActionsInState.Where(a => a.Fsm == fsm).Select(a => (a.StateName, a.Emitter)).ToList();
         for (var i = ActionsInState.Count - 1; i >= 0; i--) {
             var actionInState = ActionsInState[i];
 
@@ -611,7 +643,8 @@ internal static partial class EntityFsmActions {
 
             if (actionInState.Fsm == fsm && actionInState.StateName != stateName) {
                 //Logger.Debug("EntityFsmActions: state changed, cancelling action in state");
-                actionInState.ExitState();
+                actionInState.ExitState(actionInState.Emitter == null ||
+                                        InStateStops.Stops(actionInState.Emitter, stateName, registered));
                 ActionsInState.RemoveAt(i);
             }
         }
@@ -642,22 +675,29 @@ internal static partial class EntityFsmActions {
         /// </summary>
         public System.Action ExitAction { private get; init; }
 
+        /// <summary>(coop) The emitter an in-state particle play started, kept by a next state that plays it too.</summary>
+        public object? Emitter { get; init; }
+
         /// <summary>
         /// Register this action by adding it to the list.
         /// </summary>
         public void Register() {
+            // (coop) an entry whose FSM's object is gone (its room unloaded in the state) never sees a state change: drop
+            // it, or every late copy's in-state effect (LateEffects) stays behind (static_growth: 10 to 20 over 10 hops)
+            ActionsInState.RemoveAll(a => a.Fsm.GameObject == null);
             ActionsInState.Add(this);
         }
 
         /// <summary>
         /// Call when the state is exited, will stop the coroutine and execute the exit action.
         /// </summary>
-        public void ExitState() {
+        /// <param name="runAction">(coop) Whether its exit action runs: not for an emitter the entered state plays too.</param>
+        public void ExitState(bool runAction = true) {
             if (Coroutine != null) {
                 MonoBehaviourUtil.Instance.StopCoroutine(Coroutine);
             }
 
-            ExitAction?.Invoke();
+            if (runAction) ExitAction?.Invoke();
         }
     }
 }

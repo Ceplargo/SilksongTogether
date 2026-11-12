@@ -9,6 +9,11 @@
     <!-- BossRule's Unity-free files, compiled here without the game. -->
     <ItemGroup>
         <Compile Include="..\BossRule\WaitRule.cs" Link="WaitRule.cs"/>
+        <Compile Include="..\BossRule\HiddenArea.cs" Link="HiddenArea.cs"/>
+        <Compile Include="..\BossRule\DropRule.cs" Link="DropRule.cs"/>
+        <Compile Include="..\BossRule\CaravanRule.cs" Link="CaravanRule.cs"/>
+        <Compile Include="..\BossRule\TollRule.cs" Link="TollRule.cs"/>
+        <Compile Include="..\BossRule\ArenaWave.cs" Link="ArenaWave.cs"/>
         <Compile Include="..\BossRule\ReadyWait.cs" Link="ReadyWait.cs"/>
         <Compile Include="..\BossRule\BossCatalog.cs" Link="BossCatalog.cs"/>
         <Compile Include="..\BossRule\FightTracker.cs" Link="FightTracker.cs"/>
@@ -25,7 +30,9 @@
         <Compile Include="..\BossRule\RoomCatalog.cs" Link="RoomCatalog.cs"/>
         <Compile Include="..\BossRule\FreeTraps.cs" Link="FreeTraps.cs"/>
         <Compile Include="..\BossRule\LocalTraps.cs" Link="LocalTraps.cs"/>
+        <Compile Include="..\BossRule\BenchBellRule.cs" Link="BenchBellRule.cs"/>
         <Compile Include="..\BossRule\PerformWakes.cs" Link="PerformWakes.cs"/>
+        <Compile Include="..\BossRule\DialogueShare.cs" Link="DialogueShare.cs"/>
     </ItemGroup>
 
     <ItemGroup>

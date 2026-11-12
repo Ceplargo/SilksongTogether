@@ -798,5 +798,20 @@ internal enum AnimationClip {
     WitchTentacles,
     ShamanCancel,
     BindInterrupt,
-    Bench
+    Bench,
+    // (coop) a hero's run start and footstep, sent by its game (StepSound)
+    RunStart,
+    Footstep,
+    // (coop) a hero's soft landing, sent by its game when it spawns its landing effect (Landing)
+    SoftLand,
+    // (coop) a hero's landing on a tilting platform, sent by its game (TiltLand)
+    TiltLand,
+    // (coop) a hero's Silk Heart get-up sound, sent by its game (HeartGetUpSound)
+    HeartGetUp,
+    // (coop) a hero's item-get reaction, sent by its game (ItemGetReactionEffect)
+    ItemGetReaction,
+    // (coop) a hero's dirt fall from a dusty platform, sent by its game with the platform's place (DustLand)
+    DustLand,
+    // (coop) a hero's nail spark on a wall, sent by its game with the spark's place and turn (NailWallSpark)
+    NailWallSpark
 }

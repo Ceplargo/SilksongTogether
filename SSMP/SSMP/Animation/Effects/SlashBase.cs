@@ -27,8 +27,9 @@ internal abstract class SlashBase : ParryableEffect {
     /// <summary>
     /// Get animation effect info for slashes. Also used by <see cref="NeedleStrike"/>.
     /// </summary>
+    /// <param name="repeat">(coop, 0.3.21) The hero's clip started again for the same attack: no new slash.</param>
     /// <returns>A byte array containing effect info.</returns>
-    public static byte[] GetSlashEffectInfo() {
+    public static byte[] GetSlashEffectInfo(bool repeat = false) {
         var crestType = CrestTypeExt.FromInternal(PlayerData.instance.CurrentCrestID);
         var slashEffects = new HashSet<SlashEffect>();
         if (crestType == CrestType.Beast && HeroController.instance.warriorState.IsInRageMode) {
@@ -46,11 +47,24 @@ internal abstract class SlashBase : ParryableEffect {
             slashEffects.Add(SlashEffect.Longclaw);
         }
 
+        if (repeat) {
+            slashEffects.Add(SlashEffect.Repeat);
+        }
+
         var packet = new Packet();
         packet.WriteBitFlag(slashEffects);
 
         return packet.ToArray();
     }
+
+    /// <summary>
+    /// (coop, 0.3.21) Whether a copied slash marked <see cref="SlashEffect.Repeat"/> (its hero's clip started again for
+    /// the same attack, SSMP.Game.Client.SlashRepeatRule) makes no slash. The friend's game played the host's one swing as
+    /// two slashes 17 ms apart, each hitting Geo Rock 2 (Task 12's world sweep over Bone_16), so the rock broke a swing
+    /// early there.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
+    private static bool PlaysOnce() => true;
 
     /// <summary>
     /// Plays the slash animation for the given player.
@@ -64,9 +78,15 @@ internal abstract class SlashBase : ParryableEffect {
             Logger.Error("Could not get null or empty effect info for SlashBase");
             return;
         }
-        
+
         var packet = new Packet(effectInfo);
         var slashEffects = packet.ReadBitFlag<SlashEffect>();
+
+        // (coop, 0.3.21) one slash per attack: its clip started again for the same attack makes none (PlaysOnce)
+        if (slashEffects.Contains(SlashEffect.Repeat) && PlaysOnce()) {
+            Logger.Debug($"(coop) slash {type} of {playerObject.name} again for the same attack: no slash");
+            return;
+        }
 
         Play(playerObject, type, crestType, slashEffects);
     }
@@ -549,5 +569,7 @@ internal abstract class SlashBase : ParryableEffect {
         Longclaw,
         Flintslate,
         FlintslatePollip,
+        /// <summary>(coop, 0.3.21) The hero's clip started again for the same attack: no new slash.</summary>
+        Repeat,
     }
 }

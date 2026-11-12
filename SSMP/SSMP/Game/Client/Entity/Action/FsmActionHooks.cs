@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using HutongGames.PlayMaker;
 using MonoMod.RuntimeDetour;
 using SSMP.Logging;
@@ -31,6 +32,11 @@ internal static class FsmActionHooks {
     /// PlayAudioEventBase's, so each was sent twice and the second copy of a random sound picked its own clip).
     /// </summary>
     private static readonly HashSet<Type> HookedOnEnters;
+
+    /// <summary>
+    /// (coop) Each action without an "OnEnter" of its own: the start time of the state entry its "OnUpdate" last told.
+    /// </summary>
+    private static readonly ConditionalWeakTable<FsmStateAction, StrongBox<float>> UpdatedEntries = new();
 
     static FsmActionHooks() {
         TypeEvents = new Dictionary<Type, FsmActionHook>();
@@ -66,7 +72,11 @@ internal static class FsmActionHooks {
 
             var onEnterMethodInfo = type.GetMethod("OnEnter");
 
-            if (HookedOnEnters.Add(onEnterMethodInfo!.DeclaringType!)) {
+            if (onEnterMethodInfo!.DeclaringType == typeof(FsmStateAction)) {
+                // (coop) FsmStateAction's own empty "OnEnter" is every such action's (SpawnObjectFromGlobalPoolOverTimeV2,
+                // the Rock Roller's trail of pops, has none), so its "OnUpdate" tells each state entry once instead
+                Hooks.Add(new Hook(type.GetMethod("OnUpdate")!, OnActionUpdated));
+            } else if (HookedOnEnters.Add(onEnterMethodInfo.DeclaringType!)) {
                 Hooks.Add(new Hook(
                     onEnterMethodInfo,
                     OnActionEntered
@@ -93,6 +103,23 @@ internal static class FsmActionHooks {
         }
 
         fsmActionHook.InvokeEvent(self);
+    }
+
+    /// <summary>
+    /// (coop) Callback method on the "OnUpdate" method of an action without an "OnEnter" of its own: its type's callbacks
+    /// on the first update of each entry of its state (the state's start time is new), before the update itself.
+    /// </summary>
+    private static void OnActionUpdated(Action<FsmStateAction> orig, FsmStateAction self) {
+        var entered = self.State?.RealStartTime;
+        var told = UpdatedEntries.GetValue(self, _ => new StrongBox<float>(float.NaN));
+        if (entered.HasValue && !told.Value.Equals(entered.Value)) {
+            told.Value = entered.Value;
+            if (TypeEvents.TryGetValue(self.GetType(), out var fsmActionHook)) {
+                fsmActionHook.InvokeEvent(self);
+            }
+        }
+
+        orig(self);
     }
 
     /// <summary>

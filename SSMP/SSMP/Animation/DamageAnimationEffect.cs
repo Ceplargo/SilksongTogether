@@ -121,6 +121,15 @@ internal abstract class DamageAnimationEffect : AnimationEffect {
     }
 
     /// <summary>
+    /// (coop, 0.3.21) Whether a remote attack tinks off a tink object as the game alone does. Every remote attack was
+    /// set never to tink, so another player's nail on a tink object (Bone_12's Pin Challenge Lady Bug) showed no spark,
+    /// played no sound and set off nothing in this game (remote_tinks; probe_ladybug, c-ladybug-p5-3.log: its
+    /// TinkEffect.CanTink ran, its tink never).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
+    private static bool RemoteTinks() => true;
+
+    /// <summary>
     /// Fixes a remote attack by marking it as remote and by letting its <see cref="DamageEnemies"/> components play
     /// visual enemy hit reactions without directly applying PvE damage or lethal enemy side effects.
     /// </summary>
@@ -132,9 +141,14 @@ internal abstract class DamageAnimationEffect : AnimationEffect {
 
         var damageEnemiesComponents = target.GetComponentsInChildren<DamageEnemies>(true);
 
+        var tinks = RemoteTinks();
         foreach (var damageEnemies in damageEnemiesComponents) {
-            damageEnemies.doesNotTink = true;
-            damageEnemies.doesNotTinkThroughWalls = true;
+            // (coop, 0.3.21) the attack's own tink setting: GamePatcher's TinkEffect hook already plays a remote tink
+            // at its player, without the local camera shake, recoil and FSM event (its alert comes without that event:
+            // probe_tink_event). Its through-walls line would start
+            // from the local hero (TinkEffect.TryDoTinkReaction), so it is off.
+            damageEnemies.doesNotTink |= !tinks;
+            damageEnemies.doesNotTinkThroughWalls = !tinks;
             damageEnemies.doesNotParry = true;
             damageEnemies.silkGeneration = HitSilkGeneration.None;
 

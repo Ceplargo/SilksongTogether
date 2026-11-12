@@ -37,6 +37,17 @@ internal class DamageHeroComponent : EntityComponent {
     private float _lastRefresh;
 
     /// <summary>
+    /// (coop) A copy's: whether each box was on in the scene host's last data (DeathOrder.WaitsForBox).
+    /// </summary>
+    private readonly bool[] _sentOn;
+
+    /// <summary>
+    /// (coop) A copy's: the frame the scene host's data last turned one of its boxes on, or -1; a death in that frame waits
+    /// for the next, so the box shows (DeathOrder.WaitsForBox).
+    /// </summary>
+    internal int BoxOnFrame { get; private set; } = -1;
+
+    /// <summary>
     /// (coop) Print only: this game's DamageHero data sent in all, and of it the sends only the 0.05 s refresh made (no
     /// change), with their bytes; read by a probe's getstatic to size the refresh's network cost.
     /// </summary>
@@ -57,6 +68,7 @@ internal class DamageHeroComponent : EntityComponent {
             damageHero != null && damageHero.gameObject != null && damageHero.gameObject.activeSelf
         ).ToArray();
         _lastEnabled = _hostDamageHeroes.Select(damageHero => damageHero != null && damageHero.enabled).ToArray();
+        _sentOn = new bool[_hostDamageHeroes.Length];
     }
 
     internal bool OwnsActivation(GameObject? target) {
@@ -142,6 +154,11 @@ internal class DamageHeroComponent : EntityComponent {
             var damageDealt = data.Packet.ReadByte();
             var active = data.Packet.ReadBool();
             var enabled = data.Packet.ReadBool();
+            if (i < _sentOn.Length) {
+                if (active && enabled && !_sentOn[i]) BoxOnFrame = Time.frameCount;
+                _sentOn[i] = active && enabled;
+            }
+
             if (i < _hostDamageHeroes.Length && _hostDamageHeroes[i] != null &&
                 _hostDamageHeroes[i].gameObject != null) {
                 _hostDamageHeroes[i].damageDealt = damageDealt;

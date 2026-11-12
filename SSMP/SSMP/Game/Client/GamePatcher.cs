@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using HarmonyLib;
 using HutongGames.PlayMaker.Actions;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using MonoMod.RuntimeDetour;
+using SSMP.Animation.Effects.Movement;
 using SSMP.Hooks;
 using SSMP.Networking.Client;
 using SSMP.Game.Client.Entity;
@@ -57,6 +59,9 @@ internal partial class GamePatcher {
     /// </summary>
     private ILHook? _healthManagerInvincibleHook;
 
+    /// <summary>(coop) The IL hook on HardLandEffect.OnEnable's camera shake, for a copy's hard landing.</summary>
+    private ILHook? _hardLandShakeHook;
+
     /// <summary>
     /// IL hook for preventing remote player hits from granting local-only rewards or side effects.
     /// </summary>
@@ -68,6 +73,17 @@ internal partial class GamePatcher {
     /// while it runs, and ApplyStunDamage lets a copied swing stun each enemy once (<see cref="RemoteStuns"/>).
     /// </summary>
     private Hook? _healthManagerHitHook;
+
+    /// <summary>
+    /// (coop, 0.3.21 Task 8) A remote attack's hits counted as the other player's while they are applied, and the
+    /// camera shakes they set off kept to the owner's rule (<see cref="ShakeView"/>, <see cref="RemoteShakes"/>).
+    /// </summary>
+    private Hook? _damageEnemiesProcessDamageBufferHook;
+
+    private Hook? _cameraShakeManagerDoShakeHook;
+
+    /// <summary>(coop) The hook on AudioEventManager.TryPlayAudioClip, for KillSounds.</summary>
+    private Hook? _audioEventPlayHook;
 
     private Hook? _healthManagerApplyStunDamageHook;
 
@@ -123,7 +139,30 @@ internal partial class GamePatcher {
     /// Whether knockback of the local player is currently suppressed because a remote player's attack is being
     /// processed. See <see cref="DamageEnemiesOnLateFixedUpdate"/>.
     /// </summary>
-    private bool _suppressHeroKnockback;
+    private static bool _suppressHeroKnockback;
+
+    /// <summary>
+    /// (coop, 0.3.21) <paramref name="hit"/> run with the local player's knockback suppressed, as
+    /// <see cref="DamageEnemiesOnLateFixedUpdate"/> does for a remote player's damager: a remote down slash's direct
+    /// hit (<see cref="SSMP.Fsm.RemoteHeroDownAttack"/>) comes from its trigger, outside that hook.
+    /// </summary>
+    internal static bool AsRemoteAttack(Func<bool> hit) {
+        var lastSuppress = _suppressHeroKnockback;
+        _suppressHeroKnockback = KeepsLocalHeroOut();
+        try {
+            return hit();
+        } finally {
+            _suppressHeroKnockback = lastSuppress;
+        }
+    }
+
+    /// <summary>
+    /// (coop, 0.3.21) Whether a remote player's attack leaves the local hero and camera alone: every remote damager's
+    /// knockback guard (<see cref="DamageEnemiesOnLateFixedUpdate"/>, <see cref="AsRemoteAttack"/>) and the tink's shake
+    /// and recoil; a check's twin switches it off with a patch (pogo_hits, remote_tinks).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static bool KeepsLocalHeroOut() => true;
 
     public GamePatcher(NetClient netClient, EntityManager entityManager) {
         _netClient = netClient;
@@ -143,6 +182,8 @@ internal partial class GamePatcher {
             ]
         );
 
+        _hardLandShakeHook = TryCreateILHook(typeof(HardLandEffect), "OnEnable", HardLandEffectOnEnable);
+
         _healthManagerInvincibleHook = TryCreateILHook(
             typeof(HealthManager), "Invincible", HealthManagerOnInvincible
         );
@@ -154,6 +195,19 @@ internal partial class GamePatcher {
         _healthManagerTakeDamageDetour = TryCreateHook(typeof(HealthManager), "TakeDamage", HealthManagerOnTakeDamageOnlyLanded);
 
         _healthManagerHitHook = TryCreateHook(typeof(HealthManager), "Hit", HealthManagerOnHit);
+
+        _damageEnemiesProcessDamageBufferHook = TryCreateHook(
+            typeof(DamageEnemies), "ProcessDamageBuffer", DamageEnemiesOnProcessDamageBuffer
+        );
+        _cameraShakeManagerDoShakeHook = TryCreateHook(
+            typeof(CameraShakeManager), "DoShake", CameraShakeManagerOnDoShake,
+            parameterTypes: [typeof(ICameraShake), typeof(UnityEngine.Object), typeof(bool), typeof(bool), typeof(bool)]
+        );
+
+        _audioEventPlayHook = TryCreateHook(
+            typeof(AudioEventManager), nameof(AudioEventManager.TryPlayAudioClip), AudioEventManagerOnTryPlayAudioClip,
+            StaticNonPublicPublicFlags
+        );
 
         _healthManagerApplyStunDamageHook = TryCreateHook(
             typeof(HealthManager), "ApplyStunDamage", HealthManagerOnApplyStunDamage
@@ -216,9 +270,27 @@ internal partial class GamePatcher {
         RegisterAggressionHooks();
 
         AddHook(typeof(AudioSource), nameof(AudioSource.Play), AudioSourceOnPlay, Type.EmptyTypes);
+        AddHook(typeof(FlingObject), nameof(FlingObject.OnEnter), FlingObjectOnEnter);
+        AddHook(typeof(HealthManager), "SpawnItemDrop", HealthManagerSpawnItemDrop);
+        if (typeof(FlingUtils).GetMethod(nameof(FlingUtils.FlingObject), BindingFlags.Public | BindingFlags.Static, null,
+                [typeof(FlingUtils.SelfConfig), typeof(Transform), typeof(Vector3)], null) is { } fling) {
+            _hooks.Add(new Hook(fling, FlingUtilsFlingObject));
+        } else {
+            Logger.Error("Could not hook FlingUtils#FlingObject: method does not exist");
+        }
         AddHook(typeof(DamageEnemies), nameof(DamageEnemies.LateFixedUpdate), DamageEnemiesOnLateFixedUpdate);
         AddHook(typeof(HeroController), nameof(HeroController.CanRecoil), HeroControllerOnCanRecoil);
         AddHook(typeof(HeroController), nameof(HeroController.RecoilDown), HeroControllerOnRecoilDown);
+        // (coop, 0.3.21) the soft landings the game spawns for this game's hero: Landing sends only those
+        AddHook(typeof(HeroController), nameof(HeroController.SpawnSoftLandingPrefab), HeroControllerOnSoftLanding);
+        AddHook(typeof(HeroController), nameof(HeroController.PlaySoftLandingEffect), HeroControllerOnSoftLanding);
+        // (coop, 0.3.21) this game's hero's landings on a tilting platform: RemoteTouches sends them
+        AddHook(typeof(TiltPlat), "OnCollisionEnter2D", TiltPlatOnCollisionEnter2D);
+        // (coop, 0.3.21) this game's hero's dirt falls from a dusty platform: RemoteTouches sends them
+        AddHook(typeof(DustyPlatform), "OnCollisionEnter2D", DustyPlatformOnCollisionEnter2D);
+        // (coop, 0.3.21) an enemy copy presses the bone segments its original's game sends (CopyPresses)
+        AddHook(typeof(BoneSegment), "OnTriggerEnter2D", BoneSegmentOnTrigger);
+        AddHook(typeof(BoneSegment), "OnTriggerExit2D", BoneSegmentOnTrigger);
         AddHook(typeof(BouncePod), nameof(BouncePod.Hit), IgnoreRemoteHit<BouncePod>);
         AddHook(typeof(BounceBalloon), nameof(BounceBalloon.Hit), IgnoreRemoteHit<BounceBalloon>);
         AddHook(typeof(HitResponse), nameof(HitResponse.Hit), HitResponseOnHit);
@@ -308,6 +380,8 @@ internal partial class GamePatcher {
         _tinkEffectOnTriggerEnter2DHook = null;
 
         _healthManagerInvincibleHook?.Dispose();
+        _hardLandShakeHook?.Dispose();
+        _hardLandShakeHook = null;
         _healthManagerInvincibleHook = null;
 
         _healthManagerTakeDamageHook?.Dispose();
@@ -318,6 +392,12 @@ internal partial class GamePatcher {
 
         _healthManagerHitHook?.Dispose();
         _healthManagerHitHook = null;
+        _damageEnemiesProcessDamageBufferHook?.Dispose();
+        _damageEnemiesProcessDamageBufferHook = null;
+        _cameraShakeManagerDoShakeHook?.Dispose();
+        _cameraShakeManagerDoShakeHook = null;
+        _audioEventPlayHook?.Dispose();
+        _audioEventPlayHook = null;
 
         _healthManagerApplyStunDamageHook?.Dispose();
         _healthManagerApplyStunDamageHook = null;
@@ -384,10 +464,58 @@ internal partial class GamePatcher {
         _hooks.Add(new Hook(method, detour));
     }
 
+    /// <summary>
+    /// (coop, 0.3.21) An enemy's death pickup flung (FlingObject: the Rock Roller corpse's wish item): the other games keep
+    /// theirs unflung to follow the scene host's, which its game follows as a flung throw (ThrownComponent).
+    /// </summary>
+    /// <summary>(coop, 0.3.21) The enemy whose item drop is being flung (HealthManagerSpawnItemDrop), else null.</summary>
+    private static (HealthManager Enemy, SavedItem Item)? _dropping;
+
+    /// <summary>
+    /// (coop, 0.3.21) An enemy's item drop (a Pilgrim's Pilgrim Rag): another game running it leaves its own roll out,
+    /// the scene host's game follows its own (ThrownComponent.SkipsOwnDrop, DropFlung).
+    /// </summary>
+    private static void HealthManagerSpawnItemDrop(
+        Action<HealthManager, SavedItem, int, CollectableItemPickup, Transform, int> orig,
+        HealthManager self, SavedItem dropItem, int count, CollectableItemPickup prefab, Transform spawnPoint, int limit) {
+        if (dropItem != null && Entity.Component.ThrownComponent.SkipsOwnDrop(self)) {
+            Logger.Info($"(coop) Drop {dropItem.name} of {self.name} left out: the scene host's comes");
+            return;
+        }
+
+        _dropping = dropItem != null ? (self, dropItem) : null;
+        try {
+            orig(self, dropItem!, count, prefab, spawnPoint, limit);
+        } finally {
+            _dropping = null;
+        }
+    }
+
+    private static void FlingUtilsFlingObject(Action<FlingUtils.SelfConfig, Transform, Vector3> orig,
+        FlingUtils.SelfConfig config, Transform spawnPoint, Vector3 positionOffset) {
+        orig(config, spawnPoint, positionOffset);
+        // (coop) only an item drop's fling goes out (FlungThrows.SendsFling): money flings stay each game's own
+        if (config.Object != null) {
+            Entity.Component.ThrownComponent.DropFlung(_dropping?.Enemy, _dropping?.Item, config.Object);
+        }
+    }
+
+    private static void FlingObjectOnEnter(Action<FlingObject> orig, FlingObject self) {
+        var thrower = self.Fsm?.GameObject;
+        var flung = self.Fsm != null && self.flungObject != null ? self.Fsm.GetOwnerDefaultTarget(self.flungObject) : null;
+        if (Entity.Component.ThrownComponent.SkipsPickupFling(thrower, flung)) {
+            self.Finish();
+            return;
+        }
+
+        orig(self);
+        Entity.Component.ThrownComponent.PickupFlung(thrower, flung);
+    }
+
     private static void AudioSourceOnPlay(Action<AudioSource> orig, AudioSource self) {
         orig(self);
         if (self.loop) {
-            LoopStarts.Played(self);
+            LoopStarts.Played(self, Time.unscaledTime);
         }
     }
 
@@ -505,6 +633,19 @@ internal partial class GamePatcher {
     /// </summary>
     /// <param name="source">The source object stored on a hit or attack object.</param>
     /// <returns>True when the source is local or unknown; otherwise false.</returns>
+    /// <summary>(coop) Whether a hit source is another player's: under a tracked player that is not this game's hero.</summary>
+    private static bool IsRemotePlayerSource(GameObject? source) {
+        if (source == null) return false;
+        var root = source.GetHitSourceRoot();
+        var hero = HeroController.instance != null ? HeroController.instance.gameObject : null;
+        foreach (var player in PlayerTargetRegistry.GetTrackedPlayers()) {
+            if (player == null || player == hero) continue;
+            if (source.transform.IsChildOf(player.transform) || player.transform.root == root) return true;
+        }
+
+        return false;
+    }
+
     private static bool IsLocalHitSource(GameObject? source) {
         var root = source.GetHitSourceRoot();
         if (root == null) {
@@ -651,8 +792,11 @@ internal partial class GamePatcher {
                 i => i.MatchBrfalse(out _)
             );
 
+            // (coop, 0.3.21 Task 8) a remote tink's shake goes ahead while its object shows here (the owner's rule)
             var afterCameraShakeLabel = c.DefineLabel();
-            c.EmitDelegate(() => isLocalPlayer);
+            c.Emit(OpCodes.Ldarg_0);
+            c.EmitDelegate<Func<TinkEffect, bool>>(tink => ShakeView.TinkShakes(
+                isLocalPlayer, KeepsLocalHeroOut(), RemoteShakes.Shows(tink), ShakeView.OnlyInView()));
             c.Emit(OpCodes.Brfalse, afterCameraShakeLabel);
 
             c.GotoNext(
@@ -671,7 +815,7 @@ internal partial class GamePatcher {
                 );
 
                 var afterRecoilLabel = c.DefineLabel();
-                c.EmitDelegate(() => isLocalPlayer);
+                c.EmitDelegate(() => isLocalPlayer || !KeepsLocalHeroOut());
                 c.Emit(OpCodes.Brfalse, afterRecoilLabel);
                 c.GotoNext(
                     MoveType.After,
@@ -744,6 +888,26 @@ internal partial class GamePatcher {
     }
 
     /// <summary>
+    /// (coop) HardLandEffect.OnEnable sends its camera shake through HardLanding.Shake, which leaves it out while a
+    /// copy's hard landing effect is spawned: the game alone shakes only for its own hero.
+    /// </summary>
+    private static void HardLandEffectOnEnable(ILContext il) {
+        try {
+            var c = new ILCursor(il);
+            c.GotoNext(
+                MoveType.After,
+                i => i.MatchLdstr("AverageShake"),
+                i => i.MatchCallvirt<PlayMakerFSM>(nameof(PlayMakerFSM.SendEvent))
+            );
+            c.Index--;
+            c.Remove();
+            c.EmitDelegate<Action<PlayMakerFSM, string>>(HardLanding.Shake);
+        } catch (Exception e) {
+            Logger.Error($"Could not change HardLandEffect#OnEnable IL:\n{e}");
+        }
+    }
+
+    /// <summary>
     /// IL Hook to modify the behaviour of the TakeDamage method in HealthManager. This modification adds a
     /// conditional branch in case the nail swing from the HitInstance was from a remote player to ensure that
     /// soul is not gained for remote hits.
@@ -777,6 +941,50 @@ internal partial class GamePatcher {
     /// <summary>
     /// (coop) Notes the hit's source and whether it is a first hit while the hit runs, for its stun.
     /// </summary>
+    /// <summary>
+    /// (coop, 0.3.21 Task 8) A remote attack's buffered hits on enemies and objects: each counts as the other player's
+    /// hit while it is applied, so the camera shakes it sets off here keep to the owner's rule.
+    /// </summary>
+    private static void DamageEnemiesOnProcessDamageBuffer(Action<DamageEnemies> orig, DamageEnemies self) {
+        // (coop) a followed copy's damage (StageBreaks): props and HitResponses only, the scene host's game hits the enemies
+        if (self && Entity.Component.ThrownComponent.CopyBreakers.Contains(self)) {
+            CurrentDamageBuffer(self)?.RemoveAll(r => !Entity.Component.StageBreaks.Keeps(
+                true, r.Responder is Breakable, r.Responder is global::HitResponse));
+        }
+
+        var remote = self && !IsLocalHitSource(self.gameObject);
+        if (remote) RemoteShakes.Begin();
+        try {
+            orig(self);
+        } finally {
+            if (remote) RemoteShakes.End();
+        }
+    }
+
+    private static readonly AccessTools.FieldRef<DamageEnemies, List<DamageEnemies.HitResponse>> CurrentDamageBufferRef =
+        AccessTools.FieldRefAccess<DamageEnemies, List<DamageEnemies.HitResponse>>("currentDamageBuffer");
+
+    /// <summary>(coop) A damager's targets this frame, before ProcessDamageBuffer hits them.</summary>
+    private static List<DamageEnemies.HitResponse>? CurrentDamageBuffer(DamageEnemies self) =>
+        CurrentDamageBufferRef(self);
+
+    /// <summary>
+    /// (coop, 0.3.21 Task 8) A camera shake goes ahead unless a remote player's hit set it off and its source does not
+    /// show on this screen (<see cref="ShakeView.Shakes"/>).
+    /// </summary>
+    private static void CameraShakeManagerOnDoShake(
+        Action<CameraShakeManager, ICameraShake, UnityEngine.Object, bool, bool, bool> orig,
+        CameraShakeManager self, ICameraShake shake, UnityEngine.Object source, bool doFreeze, bool vibrate,
+        bool sendWorldForce
+    ) {
+        if (RemoteShakes.InRemoteHit && !ShakeView.Shakes(true, RemoteShakes.Shows(source), ShakeView.OnlyInView())) {
+            Logger.Info($"(coop) a remote hit's shake left out, its source not shown here: {RemoteShakes.Described(shake, source)}");
+            return;
+        }
+
+        orig(self, shake, source, doFreeze, vibrate, sendWorldForce);
+    }
+
     private IHitResponder.HitResponse HealthManagerOnHit(
         Func<HealthManager, HitInstance, IHitResponder.HitResponse> orig,
         HealthManager self,
@@ -785,16 +993,43 @@ internal partial class GamePatcher {
         var (source, first) = (_hitSource, _hitIsFirst);
         _hitSource = hitInstance.Source;
         _hitIsFirst = hitInstance.IsFirstHit;
-        if (IsLocalHitSource(hitInstance)) HealthManagerComponent.NoteOwnHit(self, hitInstance);
+        // (coop) its kind goes with the drop it makes: the hero's, and the world's (the lava), not another player's.
+        // Noted before the hit, as a killing hit's drop is sent from its Die within it, and put back after if it took no
+        // health (HitNotes: a blast the enemy ignores took the slash's kind in that frame)
+        var local = IsLocalHitSource(hitInstance);
+        var remote = IsRemotePlayerSource(hitInstance.Source);
+        var replaced = HitNotes.Notes(local, remote, true) ? HealthManagerComponent.NoteOwnHit(self, hitInstance) : null;
+        var hp = self.hp;
+        // (coop) a world object's hit: a copy shows no block of its own (its timer set, as just after one), and the scene
+        // host's game sends the block it shows (BlockedHits: Bone_09's Dock Flyer blocking a DF Lava Rock)
+        var world = BlockedHits.World(local, remote, hitInstance.IsHeroDamage);
+        var tink = self.tinkTimer;
+        var leavesOut = BlockedHits.LeavesOut(HealthManagerComponent.FollowsHost(self), world);
+        if (leavesOut) self.tinkTimer = 1f;
         if (HealthManagerComponent.LogsHealth) {
             Logger.Debug($"(coop) hit: {self.name} from {PathOf(hitInstance.Source)}, first {hitInstance.IsFirstHit}, " +
                          $"frame {Time.frameCount}");
         }
 
+        IHitResponder.HitResponse response = IHitResponder.Response.None;
         try {
-            return orig(self, hitInstance);
+            response = orig(self, hitInstance);
+            return response;
         } finally {
             (_hitSource, _hitIsFirst) = (source, first);
+            if (replaced is { } note && !HitNotes.Notes(local, remote, self.hp < hp)) {
+                HealthManagerComponent.PutBackOwnHit(self, note);
+            }
+
+            var blocked = response.response == IHitResponder.Response.Invincible && !self.PreventInvincibleEffect;
+            if (leavesOut) {
+                self.tinkTimer = tink;
+                if (blocked && HealthManagerComponent.LogsHealth) {
+                    Logger.Debug($"(coop) block left out: {self.name}, frame {Time.frameCount}");
+                }
+            } else if (BlockedHits.Sends(HealthManagerComponent.HostsHits(self), world, blocked, tink, self.tinkTimer)) {
+                HealthManagerComponent.SendBlockedHit(self, hitInstance);
+            }
         }
     }
 
@@ -840,6 +1075,22 @@ internal partial class GamePatcher {
         }
 
         orig(self, hitInstance);
+        if (self.hp <= 0 && !self.isDead && HealthManagerComponent.FollowsHost(self)) {
+            KillSounds.Seen.Killed(self.GetInstanceID(), Time.unscaledTimeAsDouble);  // it dies on the host's word
+        }
+    }
+
+    /// <summary>
+    /// (coop) The game's per-clip limit on its one-shot sounds (hits, deaths), which also hears what each played for
+    /// <see cref="KillSounds"/>: a copy's death on the scene host's word leaves out what its killing hit played here.
+    /// </summary>
+    private static bool AudioEventManagerOnTryPlayAudioClip(
+        Func<AudioClip, AudioSource, Vector3, bool> orig, AudioClip clip, AudioSource prefab, Vector3 position
+    ) {
+        if (clip != null && KillSounds.Seen.Repeats(clip.GetInstanceID())) return false;
+        var played = orig(clip, prefab, position);
+        if (played && clip != null) KillSounds.Seen.Played(clip.GetInstanceID(), Time.unscaledTimeAsDouble);
+        return played;
     }
 
     /// <summary>(coop) Whether another player's hits on an enemy this game runs come only from its game's landed hits.</summary>
@@ -970,7 +1221,7 @@ internal partial class GamePatcher {
 
         // Store the previous value instead of resetting to false, since damagers can be processed nested
         var lastSuppress = _suppressHeroKnockback;
-        _suppressHeroKnockback = true;
+        _suppressHeroKnockback = KeepsLocalHeroOut();
 
         try {
             orig(self);
@@ -998,6 +1249,58 @@ internal partial class GamePatcher {
     /// being pushed down while a remote player's attack is being processed. Downwards recoil does not go through
     /// <see cref="HeroController.CanRecoil"/>, so it needs its own patch.
     /// </summary>
+    private static readonly FieldInfo? TiltDropRoutine =
+        typeof(TiltPlat).GetField("dropRoutine", BindingFlags.Instance | BindingFlags.NonPublic);
+
+    /// <summary>A landing of this game's hero on a tilting platform: its body ran (a new drop) for her collider.</summary>
+    private static void TiltPlatOnCollisionEnter2D(Action<TiltPlat, Collision2D> orig, TiltPlat self, Collision2D other) {
+        var before = TiltDropRoutine?.GetValue(self);
+        orig(self, other);
+        var hero = HeroController.SilentInstance;
+        if (hero != null && other.gameObject == hero.gameObject && !ReferenceEquals(before, TiltDropRoutine?.GetValue(self))) {
+            RemoteTouches.HeroLandedOnTilt();
+        }
+    }
+
+    private static readonly FieldInfo? DustRunning =
+        typeof(DustyPlatform).GetField("isRunning", BindingFlags.Instance | BindingFlags.NonPublic);
+
+    /// <summary>A dirt fall of a dusty platform for this game's hero: its body ran (isRunning set) for her collider.</summary>
+    private static void DustyPlatformOnCollisionEnter2D(
+        Action<DustyPlatform, Collision2D> orig,
+        DustyPlatform self,
+        Collision2D other
+    ) {
+        var before = DustRunning?.GetValue(self) is true;
+        orig(self, other);
+        var hero = HeroController.SilentInstance;
+        if (hero != null && other.gameObject == hero.gameObject && !before && DustRunning?.GetValue(self) is true) {
+            RemoteTouches.HeroLandedOnDust(self.transform.position);
+        }
+    }
+
+    /// <summary>
+    /// A collider met or left a bone segment: an enemy copy's own touch is passed by (its original's game sends its
+    /// presses); an enemy original's begun or ended touch goes to its Entity to send (CopyPresses).
+    /// </summary>
+    private static void BoneSegmentOnTrigger(Action<BoneSegment, Collider2D> orig, BoneSegment self, Collider2D other) {
+        if (CopyPresses.Bypass || other == null) {
+            orig(self, other);
+            return;
+        }
+
+        if (CopyPresses.Holds(other)) return;
+        var root = CopyPresses.RootOf(other);
+        var before = root != null ? CopyPresses.Count(self, root) : 0;
+        orig(self, other);
+        if (root != null) CopyPresses.Touched(self, root, before);
+    }
+
+    private static void HeroControllerOnSoftLanding(Action<HeroController> orig, HeroController self) {
+        SSMP.Animation.Effects.Movement.Landing.SoftLanded();
+        orig(self);
+    }
+
     private void HeroControllerOnRecoilDown(Action<HeroController> orig, HeroController self) {
         if (_suppressHeroKnockback) {
             return;

@@ -88,6 +88,12 @@ internal static partial class EntityFsmActions {
             return;
         }
 
+        // (coop) a silk this copy already showed (LateSilk: its state came before this spawn) is not spawned again
+        if (action.gameObject.Value.GetComponent<SilkPossession>() != null && action.storeObject.Value is { } shown
+            && shown.activeInHierarchy && shown.GetComponent<SilkPossession>() != null) {
+            return;
+        }
+
         var spawnedObject = action.gameObject.Value.Spawn(position, Quaternion.Euler(euler));
         action.storeObject.Value = spawnedObject;
     }
@@ -489,6 +495,63 @@ internal static partial class EntityFsmActions {
 
                 var (position, euler) = PoolSpawnPlace(action.spawnPoint.Value, action.position, action.rotation, Vector3.up);
                 action.gameObject.Value.Spawn(position, Quaternion.Euler(euler));
+            }
+        }
+    }
+
+    #endregion
+
+    #region SpawnObjectFromGlobalPoolOverTimeV2
+
+    /// <summary>
+    /// (coop) Whether the scene host's over-time spawns of the second kind are copied (a check's twin switches it off
+    /// with a patch).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CopiesOverTimeV2() => true;
+
+    /// <summary>Builds network data from the FSM action. The Rock Roller's trail of Delayed Pop Explosions comes this way
+    /// while it rolls or flies, and the other players saw 2 or 3 of its 30 to 50 pops (0.3.21 Task 12, NOTES 367).</summary>
+    private static bool GetNetworkDataFromAction(EntityNetworkData data, SpawnObjectFromGlobalPoolOverTimeV2 action) =>
+        CopiesOverTimeV2() && action.gameObject.Value != null && !IsEnemyPrefab(action.gameObject.Value);
+
+    /// <summary>Applies network data to the FSM action: the same object every period while the scene host's FSM stays
+    /// in the state, where the copy's spawn point is then, moved and scaled at random within the action's ranges as
+    /// the game's own spawn is.</summary>
+    private static void ApplyNetworkDataFromAction(EntityNetworkData data, SpawnObjectFromGlobalPoolOverTimeV2 action) {
+        var coroutine = MonoBehaviourUtil.Instance.StartCoroutine(Behaviour());
+
+        new ActionInState {
+            Fsm = action.Fsm,
+            StateName = action.State.Name,
+            Coroutine = coroutine
+        }.Register();
+        return;
+
+        IEnumerator Behaviour() {
+            while (action.frequency.Value > 0) {
+                yield return new WaitForSeconds(action.frequency.Value);
+
+                if (action.gameObject.Value == null || CopyGone(action)) {
+                    break;
+                }
+
+                var (position, euler) = PoolSpawnPlace(action.spawnPoint.Value, action.position, action.rotation, Vector3.up);
+                var spawned = action.gameObject.Value.Spawn(position, Quaternion.Euler(euler));
+                if (action.originVariationX != null) {
+                    spawned.transform.Translate(Random.Range(-action.originVariationX.Value, action.originVariationX.Value), 0f, 0f, Space.World);
+                }
+
+                if (action.originVariationY != null) {
+                    spawned.transform.Translate(0f, Random.Range(-action.originVariationY.Value, action.originVariationY.Value), 0f, Space.World);
+                }
+
+                if (action.scaleMin != null && action.scaleMax != null) {
+                    var scale = Random.Range(action.scaleMin.Value, action.scaleMax.Value);
+                    if (Mathf.Abs(scale - 1f) > 0.001f) {
+                        spawned.transform.localScale = new Vector3(scale, scale, scale);
+                    }
+                }
             }
         }
     }

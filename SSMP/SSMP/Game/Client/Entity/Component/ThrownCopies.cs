@@ -22,4 +22,12 @@ internal static class ThrownCopies {
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static bool EndsRecoveredThrows() => true;
+
+    /// <summary>(0.3.21) Whether a thrown copy's Animator always animates while a copy (<see cref="CopyCulling{TAnimator,TMode}"/>):
+    /// one culled whose clips key no animation events (an event would play off screen where the game alone culls it).</summary>
+    internal static bool Animates(bool culled, bool hasEvents) => culled && !hasEvents && AnimatesCopies();
+
+    /// <summary>(0.3.21) Not inlined: blast_follow's twin skips it, which gives false.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool AnimatesCopies() => true;
 }

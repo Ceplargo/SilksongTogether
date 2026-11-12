@@ -51,7 +51,7 @@ internal sealed class CutsceneFollower {
             Stop();
             _scene = scene;
             if (scene == null) return;
-            foreach (var entry in CutsceneCatalog.InRoom(_catalog, scene).Where(e => e.Follow)) {
+            foreach (var entry in CutsceneCatalog.InRoom(_catalog, scene).Where(e => e.Follow && (!e.KeepsHero || FollowsRides()))) {
                 _watched.Add(new Watched { Entry = entry, Run = new CutsceneRun(entry.Start, entry.Skip) });
             }
         }
@@ -90,7 +90,7 @@ internal sealed class CutsceneFollower {
     public void Received(string scene, string name, string state, ushort seq) {
         if (scene != _scene) return;
         if (_watched.FirstOrDefault(w => w.Entry.Name == name && w.Fsm != null) is { } watched) {
-            Follow(watched.Fsm!, watched.Run, seq, state);
+            Follow(watched.Fsm!, watched.Run, seq, state, watched.Entry);
         }
     }
 
@@ -99,7 +99,7 @@ internal sealed class CutsceneFollower {
     /// a later state it has not entered).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
-    public static void Follow(PlayMakerFSM fsm, CutsceneRun run, ushort seq, string state) {
+    public static void Follow(PlayMakerFSM fsm, CutsceneRun run, ushort seq, string state, CutsceneEntry? entry = null) {
         // an FSM off in this game (the opening's, once this game's values say it played) never runs on to its end, so its
         // follow would hold this game's hero for good
         if (!fsm.isActiveAndEnabled) {
@@ -118,13 +118,21 @@ internal sealed class CutsceneFollower {
 
         if (!run.Follows(seq, state, fsm.ActiveStateName)) return;
 
+        // a ride whose states would take this game's hero along (the caravan's fade and room change): what the room shows
+        if (entry?.LeaveAt is { Count: > 0 } leaveAt) {
+            RideLeave.Told(fsm, state, leaveAt.Contains(state));
+            Debug.Log($"[BossRule] The cutscene {fsm.gameObject.name} ({fsm.FsmName}) plays another game's {state} here");
+            return;
+        }
+
         var starting = !run.Started;
+        var keepsHero = entry?.KeepsHero == true;  // a ride is its rider's: this game's hero stays its player's
         _following = true;
         try {
             // the setter's own walk up to it (a shrine's interaction) took that hero's control before the start: this
             // game's hero stops with it; the cutscene's end gives both back (the shrine's Set Finished)
-            if (starting && HeroController.SilentInstance is { } hero) hero.RelinquishControl();
-            CloseMessages();
+            if (starting && !keepsHero && HeroController.SilentInstance is { } hero) hero.RelinquishControl();
+            if (!keepsHero) CloseMessages();
             fsm.SetState(state);
         } finally {
             _following = false;
@@ -155,6 +163,10 @@ internal sealed class CutsceneFollower {
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch (it then reads false)
     public static bool EndsAtRelease() => true;
+
+    /// <summary>Whether the rides (keeps_hero: the Bellway's beast, the caravan) are followed (0.3.21).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // ride_follow's twin switches it off with a patch (it then reads false)
+    public static bool FollowsRides() => true;
 
     /// <summary>Whether this game's hero is between rooms: its room change has not ended.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch (it then reads false)

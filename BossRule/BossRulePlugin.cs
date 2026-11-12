@@ -19,7 +19,7 @@ public class BossRulePlugin : BaseUnityPlugin {
     /// server refuses a friend whose version differs, since synced values travel as positions in a list built into
     /// the mod.
     /// </summary>
-    internal const string Version = "0.3.20";
+    internal const string Version = "0.3.21";
 
     private BossRuleClientAddon? _client;
 
@@ -41,12 +41,24 @@ public class BossRulePlugin : BaseUnityPlugin {
             prefix: new HarmonyMethod(typeof(StartGate), nameof(StartGate.StartBattlePrefix)));
         harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.DoEndBattle)),
             prefix: new HarmonyMethod(typeof(ArenaWins), nameof(ArenaWins.EndPrefix)));
+        harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.StartBattle)),
+            prefix: new HarmonyMethod(typeof(ArenaWaves), nameof(ArenaWaves.StartBattlePrefix)));
+        harmony.Patch(AccessTools.Method(typeof(BattleScene), "StartWave"),
+            prefix: new HarmonyMethod(typeof(ArenaWaves), nameof(ArenaWaves.StartWavePrefix)));
+        harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.WaveEnd)),
+            prefix: new HarmonyMethod(typeof(ArenaWaves), nameof(ArenaWaves.WaveEndPrefix)));
         harmony.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.Trigger2dEvent),
                 nameof(HutongGames.PlayMaker.Actions.Trigger2dEvent.DoTriggerStay2D)),
             prefix: new HarmonyMethod(typeof(GroundBells), nameof(GroundBells.TriggerStayPrefix)));
         harmony.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.SendEventByName),
                 nameof(HutongGames.PlayMaker.Actions.SendEventByName.OnEnter)),
             postfix: new HarmonyMethod(typeof(MultiHits), nameof(MultiHits.SentPostfix)));
+        harmony.Patch(AccessTools.Method(typeof(PlayMakerFSM), "OnDisable"),
+            prefix: new HarmonyMethod(typeof(TrapFollow), nameof(TrapFollow.DisablePrefix)));
+        harmony.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.Wait), "OnUpdate"),
+            prefix: new HarmonyMethod(typeof(TrapFollow), nameof(TrapFollow.WaitPrefix)));
+        harmony.Patch(AccessTools.Method(typeof(ActivateChildrenOnContact), "OnTriggerEnter2D"),
+            postfix: new HarmonyMethod(typeof(ContactFollow), nameof(ContactFollow.EnterPostfix)));
         harmony.Patch(AccessTools.Method(typeof(BellShrineGateLock), nameof(BellShrineGateLock.StartedPlaying)),
             postfix: new HarmonyMethod(typeof(DoorBells), nameof(DoorBells.StartedPostfix)));
         harmony.Patch(AccessTools.Method(typeof(BellShrineGateLock), nameof(BellShrineGateLock.StoppedPlaying)),
@@ -58,6 +70,14 @@ public class BossRulePlugin : BaseUnityPlugin {
             prefix: new HarmonyMethod(typeof(Spectate), nameof(Spectate.LeavingPrefix)));
         harmony.Patch(AccessTools.Method(typeof(GameManager), nameof(GameManager.ReturnToMainMenu)),
             prefix: new HarmonyMethod(typeof(Spectate), nameof(Spectate.LeavingPrefix)));
+        harmony.Patch(AccessTools.Method(typeof(CollectableItemPickup), nameof(CollectableItemPickup.SetItem)),
+            postfix: new HarmonyMethod(typeof(DropShare), nameof(DropShare.SetItemPostfix)));
+        harmony.Patch(AccessTools.Method(typeof(PersistentEnemyItemDrop), "DropItem"),
+            postfix: new HarmonyMethod(typeof(DropShare), nameof(DropShare.DropItemPostfix)));
+        harmony.Patch(AccessTools.Method(typeof(PlayAudioEventBase), nameof(PlayAudioEventBase.OnEnter)),
+            postfix: new HarmonyMethod(typeof(TollFollow), nameof(TollFollow.AudioPostfix)));
+        DialogueHooks.Apply(harmony);
+        DialogueOverlay.Make();
         // SSMP's two copy dispatchers: a mark's record has the last 10 s of copied actions
         var ssmp = typeof(ClientAddon).Assembly;
         var dispatchers = ssmp.GetType("SSMP.Game.Client.Entity.Action.EntityFsmActions", true);
@@ -72,6 +92,7 @@ public class BossRulePlugin : BaseUnityPlugin {
 
     private void Update() {
         _client?.Tick();
+        if (_client?.Connected == true) CaravanRespawn.Tick();
         Marks.Tick(_client?.Connected == true);
     }
 }

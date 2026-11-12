@@ -1,3 +1,4 @@
+using SSMP.Game.Client;
 using UnityEngine;
 
 namespace SSMP.Fsm;
@@ -98,7 +99,19 @@ internal class PredictiveInterpolation : MonoBehaviour {
     private float _adaptedDecayMultiplier;
     private float _currentRtt;
 
+    /// <summary>
+    /// (coop, 0.3.21) An enemy's copy (Entity): not carried past the last place sent (<see cref="CopyStopRule"/>).
+    /// </summary>
+    internal bool EnemyCopy;
+
     #endregion
+
+    /// <summary>
+    /// (coop) Not inlined: skipped (false), an enemy's copy is carried on at its last speed as a hero's copy is, as
+    /// before 0.3.21's fix.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static bool HoldsCopiesAtLast() => true;
 
     private void Awake() {
         // One-time: runs once when this object is first created for the pool
@@ -183,6 +196,9 @@ internal class PredictiveInterpolation : MonoBehaviour {
         var clampedTime = _timeSinceLastPacket;
         var maxTime = serverDeltaTime * predCapMult;
         if (clampedTime > maxTime) clampedTime = maxTime;
+        // (coop) an enemy's copy stays at the last place sent: carried on, it ran past where its original stopped
+        var carries = CopyStopRule.CarriesOn(EnemyCopy, HoldsCopiesAtLast());
+        if (!carries) clampedTime = 0f;
 
         // Inline position calculation
         var px = _lastServerPosition.x + _velocity.x * clampedTime;
@@ -195,9 +211,15 @@ internal class PredictiveInterpolation : MonoBehaviour {
             var x = omega * dt;
             var exp = 1f / (1f + x + 0.48f * x * x + 0.235f * x * x * x);
 
+            var before = _visualOffset;
             _visualOffset.x = (_visualOffset.x + _visualOffsetVelocity.x * dt) * exp;
             _visualOffset.y = (_visualOffset.y + _visualOffsetVelocity.y * dt) * exp;
             _visualOffset.z = (_visualOffset.z + _visualOffsetVelocity.z * dt) * exp;
+            if (!carries) {
+                _visualOffset.x = CopyStopRule.Settle(before.x, _visualOffset.x);
+                _visualOffset.y = CopyStopRule.Settle(before.y, _visualOffset.y);
+                _visualOffset.z = CopyStopRule.Settle(before.z, _visualOffset.z);
+            }
 
             _visualOffsetVelocity.x = (_visualOffsetVelocity.x - omega * _visualOffset.x) * exp;
             _visualOffsetVelocity.y = (_visualOffsetVelocity.y - omega * _visualOffset.y) * exp;
@@ -285,6 +307,8 @@ internal class PredictiveInterpolation : MonoBehaviour {
 
         // FIX: Dampen velocity slightly on new packet to reduce oscillation from SmoothDamp
         _visualOffsetVelocity *= 0.9f;
+        // (coop) an enemy's copy eases from rest toward the last place sent, so it never swings past it
+        if (!CopyStopRule.CarriesOn(EnemyCopy, HoldsCopiesAtLast())) _visualOffsetVelocity = Vector3.zero;
 
         // 6. Velocity Estimation
         // First, check if player has stopped (must be done even for bunched packets)

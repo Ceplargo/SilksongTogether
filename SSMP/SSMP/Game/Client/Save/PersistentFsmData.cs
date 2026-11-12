@@ -46,6 +46,21 @@ internal class PersistentFsmData {
     public bool LastBoolValue { get; set; }
 
     /// <summary>
+    /// A Geo Rock's hits left from the scene host's game, waiting for this game's own hit (<see cref="GeoRockHold"/>).
+    /// </summary>
+    public GeoRockHold Held { get; } = new();
+
+    /// <summary>(0.3.21) Run each update: a wave arena's held win (ArenaWinHold) loaded once it is due.</summary>
+    public System.Action? Tick { get; set; }
+
+    /// <summary>(coop, 0.3.21) Whether the game's item is semi-persistent (<see cref="SemiPersistence"/>).</summary>
+    public bool Semi { get; init; }
+
+    /// <summary>(coop, 0.3.21) For an enemy's bool, how many enemies of the room save under its id (0 for others):
+    /// a shared id's kill is held to the room's save (<see cref="SemiPersistence.HoldsKill"/>).</summary>
+    public int Enemies { get; init; }
+
+    /// <summary>
     /// Whether an int is stored for this data.
     /// </summary>
     public bool IsInt => GetCurrentInt != null;

@@ -51,12 +51,30 @@ public class CutsceneCatalogTests {
         var entries = CutsceneCatalog.Load(Shipped);
         Assert.Equal(new[] { "churchkeeper_intro", "greymoor_crash", "widow_intro", "shrine_silkspear",
                 "shrine_swift_step", "shrine_silk_charge", "shrine_thread_storm", "shrine_cling_grip", "crest_beast",
-                "crest_wanderer", "crest_reaper", "drifters_cloak", "charge_slash" },
+                "crest_wanderer", "crest_reaper", "drifters_cloak", "charge_slash", "bellway_ride", "caravan_ride" },
             entries.Where(e => e.Follow).Select(e => e.Name));
         Assert.Equal(new[] { "End", null, "End", "Set Finished", "Set Finished", "Set Finished", "Set Finished",
-                "Set Finished", "End 2", "End 2", "End 2", "Talk End 3", "Down To Idle" },
+                "Set Finished", "End 2", "End 2", "End 2", "Talk End 3", "Down To Idle", null, null },
             entries.Where(e => e.Follow).Select(e => e.Release));
         Assert.Null(CutsceneCatalog.Load("""[{"name": "a", "scenes": ["R"], "object": "O", "fsm": "F", "start": ["S"]}]""")[0].Release);
+    }
+
+    // (0.3.21) A ride is its rider's: the other game shows what the room shows (the Bell Beast coming; the caravan
+    // leaving) and keeps its own hero, never following the rider's own states (the map, the fling, the room change)
+    [Fact]
+    public void A_ride_is_followed_without_the_followers_hero() {
+        var entries = CutsceneCatalog.Load(Shipped);
+        Assert.Equal(new[] { "bellway_ride", "caravan_ride" }, entries.Where(e => e.KeepsHero).Select(e => e.Name));
+        var beast = entries.Single(e => e.Name == "bellway_ride");
+        Assert.Equal(new[] { "Appear Delay" }, beast.Start);
+        Assert.Subset(beast.Skip!.ToHashSet(), new[] { "Open map", "Fade", "Hero Jump", "Hero Fire", "Jump Sing",
+            "Time Passes", "Go To Stag Cutscene" }.ToHashSet());
+        Assert.Empty(beast.LeaveAt!);
+        Assert.Equal(new[] { "Sound With", "Sound Without" }, entries.Single(e => e.Name == "caravan_ride").LeaveAt);
+        var bare = CutsceneCatalog.Load(
+            """[{"name": "a", "scenes": ["R"], "object": "O", "fsm": "F", "start": ["S"]}]""");
+        Assert.False(bare[0].KeepsHero);
+        Assert.Empty(bare[0].LeaveAt!);
     }
 
     [Fact]

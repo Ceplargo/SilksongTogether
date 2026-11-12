@@ -11,6 +11,7 @@ namespace BossRule;
 /// </summary>
 internal class BossRuleServerAddon : ServerAddon {
     private readonly FightRooms _fights = new();
+    private readonly DropTakes _drops = new();
     private IServerApi? _api;
     private IServerAddonNetworkSender<BossPacketId>? _sender;
 
@@ -41,8 +42,12 @@ internal class BossRuleServerAddon : ServerAddon {
         receiver.RegisterPacketHandler<BossDefeated>(BossPacketId.BossDefeated,
             (_, packet) => Tell(packet.Scene, _fights.BossDefeated(packet.Scene)));
         receiver.RegisterPacketHandler<ArenaFollow>(BossPacketId.ArenaFollow, (id, packet) => {
-            var others = InRoom(packet.Scene).Where(p => p != id).ToArray();
-            if (others.Length > 0) _sender.SendSingleData(BossPacketId.ArenaFollow, packet, others);
+            // (0.3.21) a static a set state keeps goes to every player: one who comes in later reads it
+            var to = LocalTraps.ToEveryone(packet.State)
+                ? serverApi.ServerManager.Players.Select(p => p.Id)
+                : InRoom(packet.Scene);
+            var others = to.Where(p => p != id).ToArray();
+            if (others.Length > 0) _sender.SendCollectionData(BossPacketId.ArenaFollow, packet, others);
         });
         // SSMP hands a collection's items to the handler one by one
         receiver.RegisterPacketHandler<CutsceneState>(BossPacketId.CutsceneState, (id, state) => {
@@ -56,6 +61,27 @@ internal class BossRuleServerAddon : ServerAddon {
             if (others.Length > 0 && marks.Take(id)) _sender.SendSingleData(BossPacketId.Mark, packet, others);
         });
         serverApi.ServerManager.PlayerDisconnectEvent += player => marks.Forget(player.Id);
+        // (coop) A friend's talk and quests go to every other connected player, in any room: each game routes them itself
+        receiver.RegisterPacketHandler<DialogueMessage>(BossPacketId.Dialogue, (id, message) => {
+            var others = serverApi.ServerManager.Players.Where(p => p.Id != id).Select(p => p.Id).ToArray();
+            if (others.Length > 0) _sender.SendCollectionData(BossPacketId.Dialogue, message, others);
+        });
+        // (0.3.21) An enemy drop's first take goes to every other player, whose games take their copies away; a later
+        // take goes back to its taker, whose game gives the item back (one kill, one item)
+        receiver.RegisterPacketHandler<DropTaken>(BossPacketId.DropTaken, (id, packet) => {
+            if (_drops.Take(packet.Scene, packet.Id)) {
+                var others = serverApi.ServerManager.Players.Where(p => p.Id != id).Select(p => p.Id).ToArray();
+                if (others.Length > 0) _sender.SendSingleData(BossPacketId.DropTaken, packet, others);
+            } else {
+                _sender.SendSingleData(BossPacketId.DropTaken, new DropTaken { Scene = packet.Scene, Id = packet.Id, Lost = true }, id);
+            }
+        });
+
+        // (0.3.21) A toll's payment sound goes to every other player: a game whose machine still waits plays it
+        receiver.RegisterPacketHandler<TollCoins>(BossPacketId.TollCoins, (id, packet) => {
+            var others = serverApi.ServerManager.Players.Where(p => p.Id != id).Select(p => p.Id).ToArray();
+            if (others.Length > 0) _sender.SendSingleData(BossPacketId.TollCoins, packet, others);
+        });
 
         // A player who leaves the room or the game stops fighting. SSMP does not report every room change as a leave,
         // so entering another room counts too

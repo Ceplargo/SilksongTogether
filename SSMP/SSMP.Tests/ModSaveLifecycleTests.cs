@@ -35,7 +35,7 @@ public class ModSaveLifecycleTests {
     public void Host_save_wins_over_the_mod_save_and_world_objects_stay() {
         var host = new Dictionary<ushort, byte[]> { [1] = [1] };
         var modSave = new Dictionary<ushort, byte[]> { [1] = [2], [9] = [3] };
-        var merged = ModSaveLifecycle.MergeGlobalSaveData(host, modSave);
+        var merged = ModSaveLifecycle.MergeGlobalSaveData(host, modSave, _ => false);
         Assert.Equal([1], merged[1]);
         Assert.Equal([3], merged[9]);
         Assert.Equal(2, merged.Count);

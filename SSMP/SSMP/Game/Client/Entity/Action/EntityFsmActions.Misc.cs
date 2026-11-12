@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using HutongGames.PlayMaker;
 using HutongGames.PlayMaker.Actions;
 using SSMP.Networking.Packet.Data;
@@ -244,7 +245,11 @@ internal static partial class EntityFsmActions {
                action.Fsm.GameObject.name.StartsWith("Mantis Lord Throne") &&
                action.Fsm.Name.Equals("Mantis Throne Main") ||
                action.Fsm.GameObject.name.Equals("Radiance") &&
-               action.Fsm.Name.Equals("Control");
+               action.Fsm.Name.Equals("Control") ||
+               // (coop) a possessed enemy's silk, linked to its enemy (SetEnemy) and played (PlayPossess) in every game:
+               // uncopied, the copy's silk had no enemy and recycled itself at once (SilkPossession.Update), so the
+               // friend's game showed no strands and played no possess sound (the Pilgrims, NOTES 368)
+               action.behaviour.Value == nameof(SilkPossession);
     }
 
     /// <summary>Applies network data to the FSM action.</summary>
@@ -254,6 +259,11 @@ internal static partial class EntityFsmActions {
         }
 
         var gameObject = action.Fsm.GetOwnerDefaultTarget(action.gameObject);
+        // (coop) a copy made after the scene host's silk spawned has none: spawned here as its FSM would (LateSilk)
+        if (LateSilk.Needed(gameObject != null, action.behaviour.Value) && LateSilk.Spawns()) {
+            gameObject = SpawnLateSilk(action);
+        }
+
         if (gameObject == null) {
             return;
         }
@@ -296,6 +306,90 @@ internal static partial class EntityFsmActions {
         }
 
         action.storeResult.SetValue(obj);
+    }
+
+    /// <summary>
+    /// The silk of a copy made after the scene host's spawned it: the FSM's own SpawnObjectFromGlobalPool into the
+    /// call's Silk variable, run here at its spawn point, then linked to its enemy (SetEnemy), as its Spawn Silk state
+    /// would have. Null when the FSM has no such spawn.
+    /// </summary>
+    private static GameObject? SpawnLateSilk(CallMethodProper action) {
+        var spawns = new System.Collections.Generic.List<(string?, (FsmState, SpawnObjectFromGlobalPool))>();
+        foreach (var state in action.Fsm.States) {
+            foreach (var other in state.Actions) {
+                if (other is SpawnObjectFromGlobalPool spawn && spawn.gameObject?.Value != null) {
+                    spawns.Add((spawn.storeObject?.Name, (state, spawn)));
+                }
+            }
+        }
+
+        var (inState, found) = LateSilk.Spawner(action.gameObject?.GameObject?.Name, spawns);
+        // a silk its spawn state skips (a Quick Wake Pilgrim) the game alone never shows either
+        return found == null || SpawnSkipped(found, inState) ? null : SpawnSilk(inState, found, action.Fsm);
+    }
+
+    /// <summary>
+    /// (coop) A copy's silk shown once it learns the scene host's FSM is in the state its silk's spawn leads to (the
+    /// Pilgrim's Pray, LateSilk.OutIn): its own spawn into an empty Silk variable, run here, linked to its enemy.
+    /// </summary>
+    internal static void ShowLateSilk(HutongGames.PlayMaker.Fsm fsm, string stateName) {
+        // a copy not out (another world's Pilgrim: the Black Thread World's, off in the scene host's game too) shows none
+        if (fsm.GameObject == null || !fsm.GameObject.activeInHierarchy) return;
+        foreach (var state in fsm.States) {
+            foreach (var other in state.Actions) {
+                if (other is not SpawnObjectFromGlobalPool spawn || spawn.gameObject?.Value == null
+                    || spawn.gameObject.Value.GetComponent<SilkPossession>() == null
+                    || string.IsNullOrEmpty(spawn.storeObject?.Name) || spawn.storeObject.Value != null) continue;
+                if (!LateSilk.OutIn(stateName, state.Transitions.Select(t => ((string?) t.EventName, (string?) t.ToState)))
+                    || SpawnSkipped(spawn, state)) {
+                    continue;
+                }
+
+                var silk = SpawnSilk(state, spawn, fsm);
+                Logger.Info($"(coop) late silk shown: {fsm.GameObject.name} in {stateName}, {silk.name} at {silk.transform.position}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the spawn's state leaves before it (LateSilk.Skipped): its bool tests ahead of the spawn, read here as they
+    /// would read in this game (its own FSM's bools, the shared save's PlayerData).
+    /// </summary>
+    // (spawn first: two parameters with an action second are taken for a Get/Apply method by the type initializer)
+    private static bool SpawnSkipped(SpawnObjectFromGlobalPool spawn, FsmState state) {
+        var events = new System.Collections.Generic.List<string?>();
+        foreach (var ahead in state.Actions) {
+            if (ahead == spawn) break;
+            switch (ahead) {
+                case BoolTest test:
+                    events.Add((test.boolVariable.Value ? test.isTrue : test.isFalse)?.Name);
+                    break;
+                case PlayerDataBoolTest test when global::GameManager.instance != null:
+                    events.Add((global::GameManager.instance.GetPlayerDataBool(test.boolName.Value) ? test.isTrue : test.isFalse)?.Name);
+                    break;
+            }
+        }
+
+        return LateSilk.Skipped(events);
+    }
+
+    /// <summary>
+    /// The silk of the FSM's spawn action, at its spawn point, stored in its variable, put under its enemy where the state
+    /// does that (SetParent of the silk) and linked to it.
+    /// </summary>
+    private static GameObject SpawnSilk(FsmState state, SpawnObjectFromGlobalPool found, HutongGames.PlayMaker.Fsm fsm) {
+        var point = found.spawnPoint.Value != null ? found.spawnPoint.Value.transform.position
+            : fsm.GameObject.transform.position;
+        if (!found.position.IsNone) point += found.position.Value;
+
+        var silk = found.gameObject.Value.Spawn(point, Quaternion.identity);
+        found.storeObject.Value = silk;
+        if (state.Actions.Any(a => a is SetParent parent && parent.gameObject?.GameObject?.Name == found.storeObject.Name)) {
+            silk.transform.SetParent(fsm.GameObject.transform, true);
+        }
+
+        if (silk.GetComponent<SilkPossession>() is { } possession) possession.SetEnemy(fsm.GameObject);
+        return silk;
     }
 
     #endregion

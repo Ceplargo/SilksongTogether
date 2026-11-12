@@ -2103,8 +2103,11 @@ internal abstract class ServerManager : IServerManager {
             return;
         }
 
+        // (coop, 0.3.21) a game's semi-persistent reset (its death or bench rest) is every game's, scene host or not
+        var reset = pdVarName == null && SemiPersistence.KindOf(packet.Value) == SemiPersistence.Reset;
+
         // Check whether this save update requires the player to be scene host and do the check for it
-        if (!varProps.IgnoreSceneHost && !sceneHost) {
+        if (!varProps.IgnoreSceneHost && !sceneHost && !reset) {
             Logger.Debug("  Player is not scene host, but should be for update, not broadcasting");
             return;
         }
@@ -2156,7 +2159,11 @@ internal abstract class ServerManager : IServerManager {
 
                 Logger.Debug("  Storing player data");
 
-                playerSaveData[packet.SaveDataIndex] = packet.Value;
+                if (reset) {
+                    playerSaveData.Remove(packet.SaveDataIndex);
+                } else {
+                    playerSaveData[packet.SaveDataIndex] = packet.Value;
+                }
             } else {
                 if (varProps.Additive) {
                     if (pdVarName == null) {
@@ -2215,7 +2222,12 @@ internal abstract class ServerManager : IServerManager {
 
                 Logger.Debug("  SyncType is Server, broadcasting save update");
 
-                ServerSaveData.GlobalSaveData[packet.SaveDataIndex] = packet.Value;
+                // (coop) a reset value is dropped: a later join must not bring it back
+                if (reset) {
+                    ServerSaveData.GlobalSaveData.Remove(packet.SaveDataIndex);
+                } else {
+                    ServerSaveData.GlobalSaveData[packet.SaveDataIndex] = packet.Value;
+                }
 
                 foreach (var idPlayerDataPair in _playerData) {
                     var otherId = idPlayerDataPair.Key;
@@ -2326,14 +2338,15 @@ internal abstract class ServerManager : IServerManager {
                 return [value[0]];
             }
 
+            // (coop, 0.3.21) a second byte, semi-persistent or reset, stays (SemiPersistence)
             if (SaveDataMapping.Instance.PersistentBoolIndices.ContainsSecond(index)) {
                 if (value.Length < 1) return null;
-                return [(byte) (value[0] == 1 ? 1 : 0)];
+                return SemiPersistence.Normalize((byte) (value[0] == 1 ? 1 : 0), value);
             }
 
             if (SaveDataMapping.Instance.PersistentIntIndices.ContainsSecond(index)) {
                 if (value.Length < 1) return null;
-                return [value[0]];
+                return SemiPersistence.Normalize(value[0], value);
             }
         } catch (Exception e) {
             Logger.Warn($"Failed to validate and normalize save data for index {index}: {e}");

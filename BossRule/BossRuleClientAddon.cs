@@ -74,7 +74,7 @@ internal class BossRuleClientAddon : ClientAddon {
         void SendFollow(string scene, string flag, string state) {
             Debug.Log($"[BossRule] ArenaFollow sent: {state} ({scene})");
             var follow = new ArenaFollow { Scene = scene, Flag = flag, State = state };
-            sender.SendSingleData(BossPacketId.ArenaFollow, follow);
+            sender.SendCollectionData(BossPacketId.ArenaFollow, follow);
         }
 
         _follower = new ArenaFollower(SendFollow);
@@ -107,12 +107,19 @@ internal class BossRuleClientAddon : ClientAddon {
         ArenaWins.Send = (scene, state) => SendFollow(scene, "", state);
         FreeStarts.Send = DoorBells.Send;  // to the room's other players, as the door bells go
         TrapFollow.Send = (scene, state) => SendFollow(scene, "", state);  // any room, as arena wins go
+        BenchBells.Send = TrapFollow.Send;  // (0.3.21) a struck bench bell, to the room's other players
+        ContactFollow.Send = TrapFollow.Send;  // (0.3.21) a box that brings things out, to the room's other players
+        HiddenAreas.Friends = () => clientApi.ClientManager.Players
+            .Where(p => p.IsInLocalScene && p.PlayerObject != null).Select(p => p.PlayerObject!);
         PerformWake.Send = (scene, state) => SendFollow(scene, "", state);
         ArenaWins.SceneHost = MultiHits.SceneHost;
         ArenaWins.NotSceneHost = GroundBells.NotSceneHost;
         ArenaWins.CatalogRoom = scene => _bosses.Any(e => e.Scene == scene);
         receiver.RegisterPacketHandler<ArenaFollow>(BossPacketId.ArenaFollow, packet => {
             Debug.Log($"[BossRule] ArenaFollow received: {packet.State} ({packet.Scene})");
+            // (0.3.21) another player's set state that keeps a game static (the Lech's wound): this game keeps it
+            // too, in any room, so it reads it on its next entry; the word goes on to the room's echo below
+            if (packet.State.StartsWith(TrapFollow.Prefix)) TrapFollow.KeepStatic(packet.State.Substring(TrapFollow.Prefix.Length));
             if (GameManager.SilentInstance?.sceneName != packet.Scene) return;
             // another player's hero was caught by a boss's multi-hitter there: the scene host's game sends its connect
             if (packet.State.StartsWith(MultiHits.Prefix)) {
@@ -132,6 +139,12 @@ internal class BossRuleClientAddon : ClientAddon {
                 return;
             }
 
+            // the scene host's game started an ordinary arena or one of its waves: this game's follows
+            if (packet.State.StartsWith(ArenaWaves.Prefix)) {
+                ArenaWaves.Received(packet.Scene, packet.State.Substring(ArenaWaves.Prefix.Length));
+                return;
+            }
+
             // another player freed the room's boss from its trap: this game's frees too, the scene host's as well
             if (packet.State.StartsWith(FreeStarts.Prefix)) {
                 FreeStarts.Echo(packet.State.Substring(FreeStarts.Prefix.Length));
@@ -141,6 +154,16 @@ internal class BossRuleClientAddon : ClientAddon {
             // another player set off terrain there (a crumble, a boulder): this game's same object goes too
             if (packet.State.StartsWith(TrapFollow.Prefix)) {
                 TrapFollow.Echo(packet.State.Substring(TrapFollow.Prefix.Length));
+                return;
+            }
+            // another player struck a bench bell there: this game's swings and rings the same way
+            if (packet.State.StartsWith(BenchBells.Prefix)) {
+                BenchBells.Echo(packet.State.Substring(BenchBells.Prefix.Length));
+                return;
+            }
+            // another player's body set off a box that brings things out (Bone_10's Bone Crawler): this game's goes too
+            if (packet.State.StartsWith(ContactFollow.Prefix)) {
+                ContactFollow.Echo(packet.State.Substring(ContactFollow.Prefix.Length));
                 return;
             }
             if (packet.State.StartsWith(PerformWake.Prefix)) {
@@ -180,7 +203,13 @@ internal class BossRuleClientAddon : ClientAddon {
         });
 
         Marks.Connect(clientApi, mark => sender.SendSingleData(BossPacketId.Mark, mark));
+        // (coop) A friend's talk: this game's pages and quests go out while connected; theirs come in to the box or the chat
+        DialogueHooks.Username = () => clientApi.ClientManager.Username;
+        DialogueChat.AddMessage = line => clientApi.UiManager.ChatBox.AddMessage(line);
+        receiver.RegisterPacketHandler<DialogueMessage>(BossPacketId.Dialogue, message => DialogueChat.Received(message.Body));
         receiver.RegisterPacketHandler<Mark>(BossPacketId.Mark, Marks.Received);
+        receiver.RegisterPacketHandler<DropTaken>(BossPacketId.DropTaken, DropShare.Received);
+        receiver.RegisterPacketHandler<TollCoins>(BossPacketId.TollCoins, TollFollow.Received);
 
         _gate = new StartGate(clientApi.ClientManager,
             (scene, message) => sender.SendSingleData(BossPacketId.WaitStatus, new WaitStatus { Scene = scene, Message = message }),
@@ -197,9 +226,18 @@ internal class BossRuleClientAddon : ClientAddon {
             _connected = true;
             _wantArm = true;
             Spectate.Leaving = false;
+            DialogueChat.Reset();
+            DialogueHooks.Send = body => sender.SendCollectionData(BossPacketId.Dialogue, new DialogueMessage { Body = body });
+            DropShare.Send = (scene, id) => sender.SendSingleData(BossPacketId.DropTaken, new DropTaken { Scene = scene, Id = id });
+            TollFollow.Send = (scene, state) => sender.SendSingleData(BossPacketId.TollCoins, new TollCoins { Scene = scene, State = state });
         };
         clientApi.ClientManager.DisconnectEvent += () => {
             _connected = false;
+            DialogueHooks.Send = null;
+            DropShare.Send = null;
+            TollFollow.Send = null;
+            DropShare.Reset();
+            DialogueChat.Reset();
             StartGate.ForgetRoom();
             StartGate.Loaded.Clear();
             _gate.Disarm();
@@ -253,8 +291,12 @@ internal class BossRuleClientAddon : ClientAddon {
         GroundBells.Tick();
         MultiHits.Tick();
         ArenaWins.Tick();
+        ArenaWaves.Tick();
         if (_connected) FreeStarts.Tick();
         if (_connected) TrapFollow.Tick();
+        if (_connected) BenchBells.Tick();
+        HiddenAreas.Tick(_connected);
+        if (_connected) TollFollow.Tick();
         if (_connected) PerformWake.Tick();
     }
 

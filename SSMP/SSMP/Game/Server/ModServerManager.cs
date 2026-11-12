@@ -144,7 +144,10 @@ internal class ModServerManager : ServerManager {
                 ServerSaveData.PlayerSaveData = serverSave.PlayerSaveData;
                 ServerSaveData.GlobalSaveData = ModSaveLifecycle.MergeGlobalSaveData(
                     ServerSaveData.GlobalSaveData,
-                    serverSave.GlobalSaveData
+                    serverSave.GlobalSaveData,
+                    index => SemiPersistence.AsAlone() &&
+                             (SaveDataMapping.Instance.PersistentBoolIndices.ContainsSecond(index) ||
+                              SaveDataMapping.Instance.PersistentIntIndices.ContainsSecond(index))
                 );
 
                 Logging.Logger.Info($"Loaded remote players' save data from: {modSavePath}");

@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using HutongGames.PlayMaker.Actions;
 using SSMP.Networking.Client;
 using SSMP.Networking.Packet.Data;
@@ -132,6 +134,11 @@ internal class ThrownComponent : EntityComponent {
     /// A spawned object the scene host's game follows: its FSMs, and where it was at the last send, its velocity
     /// then, when, and its FSMs' states.
     /// </summary>
+    /// <summary>
+    /// (coop) Every copy's enemy damager in this game: its hits reach props only (StageBreaks, GamePatcher's hook).
+    /// </summary>
+    internal static readonly HashSet<DamageEnemies> CopyBreakers = [];
+
     private sealed class Followed {
         public readonly GameObject GameObject;
         public readonly PlayMakerFSM[] Fsms;
@@ -140,6 +147,9 @@ internal class ThrownComponent : EntityComponent {
 
         /// <summary>(coop) Its hero damagers, its children's included (StageDamage).</summary>
         public readonly DamageHero[] Damagers;
+
+        /// <summary>(coop) Its enemy damagers, its children's included (StageBreaks).</summary>
+        public readonly DamageEnemies[] EnemyDamagers;
         public Vector2 Position;
         public Vector2 Velocity;
         public float Time;
@@ -162,6 +172,7 @@ internal class ThrownComponent : EntityComponent {
             Fsms = FsmsOf(gameObject);
             Parts = PartsOf(gameObject);
             Damagers = gameObject.GetComponentsInChildren<DamageHero>(true);
+            EnemyDamagers = gameObject.GetComponentsInChildren<DamageEnemies>(true);
             States = new byte[Fsms.Length];
             Position = gameObject.transform.position;
             Time = UnityEngine.Time.time;
@@ -184,17 +195,28 @@ internal class ThrownComponent : EntityComponent {
         /// <summary>(coop) Its hero damagers, in the scene host's object's order (StageDamage).</summary>
         public readonly DamageHero[] Damagers;
 
+        /// <summary>(coop) Its enemy damagers, in the scene host's object's order (StageBreaks): props only.</summary>
+        public readonly DamageEnemies[] EnemyDamagers;
+
         /// <summary>
         /// (coop) Its body, if it has one with a collider of its own that is not a trigger: while that body is dynamic
         /// it hits the ground in the scene host's game, so its path never goes through it.
         /// </summary>
         public readonly Rigidbody2D? SolidBody;
 
+        /// <summary>(coop, 0.3.21) Its culled Animators set to always animate while it is a copy (Culling).</summary>
+        public readonly List<Animator> Animating = [];
+
         public Copy(GameObject gameObject) {
             GameObject = gameObject;
             Fsms = FsmsOf(gameObject);
             Parts = PartsOf(gameObject);
             Damagers = gameObject.GetComponentsInChildren<DamageHero>(true);
+            EnemyDamagers = gameObject.GetComponentsInChildren<DamageEnemies>(true);
+            foreach (var damager in EnemyDamagers) {
+                if (damager != null) CopyBreakers.Add(damager);
+            }
+
             if (gameObject.TryGetComponent<Rigidbody2D>(out var body) && System.Array.Exists(
                     gameObject.GetComponentsInChildren<Collider2D>(true), c => c.attachedRigidbody == body && !c.isTrigger)) {
                 SolidBody = body;
@@ -224,6 +246,9 @@ internal class ThrownComponent : EntityComponent {
 
         /// <summary>(coop) Each hero damager's amount (StageDamage).</summary>
         public byte[] Damages = [];
+
+        /// <summary>(coop) Its enemy damagers' amounts (StageBreaks).</summary>
+        public byte[] EnemyDamages = [];
         public (byte Fsm, byte State, byte Action) Spawner = (NoState, NoState, NoState);
         public GameObject? Prefab;
         public Vector2 Scale = Vector2.one;
@@ -240,6 +265,12 @@ internal class ThrownComponent : EntityComponent {
     /// Other games: each copy by the scene host's number for it.
     /// </summary>
     private readonly Dictionary<byte, Copy> _copies = new();
+
+    /// <summary>
+    /// (coop, 0.3.21) Other games: every copy's Animators held to always animate, with their own modes (one ledger:
+    /// the pool hands the same object to any enemy's copy).
+    /// </summary>
+    private static readonly CopyCulling<Animator, AnimatorCullingMode> Culling = new();
 
     /// <summary>
     /// Other games: the scene host's last update for each number.
@@ -324,6 +355,24 @@ internal class ThrownComponent : EntityComponent {
     /// <summary>(coop) The live components whose enemy's throws fling something followed (FlungThrows).</summary>
     private static readonly List<ThrownComponent> Flinging = [];
 
+    /// <summary>(coop) Other games: their own death pickups and the scene host's, paired (SkipsPickupFling).</summary>
+    private readonly PickupPairs<GameObject> _pickups = new();
+
+    /// <summary>(coop) Other games: until when each followed fireball copy's own fuse is held, by its instance
+    /// (FireballFollow).</summary>
+    private static readonly Dictionary<int, (float Until, Copy Copy)> FireballHeld = new();
+
+    private static MonoMod.RuntimeDetour.Hook? _fireballUpdateHook;
+
+    private static readonly System.Reflection.FieldInfo? FireballActive =
+        typeof(FireballProjectile).GetField("isActive", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    private static readonly System.Reflection.FieldInfo? FireballWarning =
+        typeof(FireballProjectile).GetField("isInExplodeAntic", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    private static readonly System.Reflection.FieldInfo? FireballFuse =
+        typeof(FireballProjectile).GetField("idleTimeLeft", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
     /// <summary>(coop) The pool prefab of each flung name, found once.</summary>
     private static readonly Dictionary<string, GameObject> FlungPrefabs = new();
 
@@ -344,9 +393,12 @@ internal class ThrownComponent : EntityComponent {
         _netClient = netClient;
         MonoBehaviourUtil.Instance.OnLateUpdateEvent += OnLateUpdate;
         MonoBehaviourUtil.Instance.OnFixedUpdateEvent += OnFixedUpdate;
+        if (_fireballUpdateHook == null && typeof(FireballProjectile).GetMethod("Update", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) is { } update) {
+            _fireballUpdateHook = new MonoMod.RuntimeDetour.Hook(update, FireballUpdate);
+        }
 
         var original = gameObject.Host;
-        if (original != null && FlungThrows.Has(original.name)) {
+        if (original != null && (FlungThrows.Has(original.name) || FlungThrows.DropsFollowed(original.name))) {
             _flinger = original.name;
             Flinging.Add(this);
         }
@@ -521,17 +573,28 @@ internal class ThrownComponent : EntityComponent {
 
     /// <summary>
     /// (coop) The parts of an object whose on/off follows the scene host's (PartBits): its children, then its colliders,
-    /// then its renderers, its children's included; the same prefab has them in the same order.
+    /// then its renderers, its children's included; the same prefab has them in the same order. Last, its fireballs:
+    /// on once one has started its warning or blown up (FireballFollow).
     /// </summary>
     private static Object[] PartsOf(GameObject gameObject) => [
         .. System.Array.ConvertAll(gameObject.GetComponentsInChildren<Transform>(true)[1..], t => t.gameObject),
-        .. gameObject.GetComponentsInChildren<Collider2D>(true), .. gameObject.GetComponentsInChildren<Renderer>(true)
+        .. gameObject.GetComponentsInChildren<Collider2D>(true), .. gameObject.GetComponentsInChildren<Renderer>(true),
+        .. gameObject.GetComponentsInChildren<FireballProjectile>(true)
     ];
 
     /// <summary>
     /// (coop) Other games: a copy's damagers deal what the scene host's do, after its own FSM has run (StageDamage).
     /// </summary>
-    private static void FollowsDamage(Copy copy, byte[] damages) {
+    private static void FollowsDamage(Copy copy, byte[] damages, byte[] breaks) {
+        if (StageDamage.Pairs(breaks.Length, copy.EnemyDamagers.Length)) {
+            for (var i = 0; i < copy.EnemyDamagers.Length; i++) {
+                if (copy.EnemyDamagers[i] != null && StageDamage.Of(breaks, i) is { } amount &&
+                    copy.EnemyDamagers[i].damageDealt != amount) {
+                    copy.EnemyDamagers[i].damageDealt = amount;
+                }
+            }
+        }
+
         if (!StageDamage.Pairs(damages.Length, copy.Damagers.Length)) {
             return;
         }
@@ -551,8 +614,65 @@ internal class ThrownComponent : EntityComponent {
         GameObject child => child.activeSelf,
         Collider2D collider => collider.enabled,
         Renderer renderer => renderer.enabled,
+        FireballProjectile fireball => FireballStarted(fireball),
         _ => false
     };
+
+    /// <summary>(coop) Whether a fireball has started its warning or blown up.</summary>
+    private static bool FireballStarted(FireballProjectile fireball) =>
+        FireballWarning?.GetValue(fireball) is true || FireballActive?.GetValue(fireball) is false;
+
+    /// <summary>
+    /// (coop) Other games, at each placement: a fireball copy's own fuse is held while the scene host's has not
+    /// started (the hold runs out FireballFollow.HoldS after the last placement), and cut to its warning once it has.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void FollowsFireball(FireballProjectile fireball, bool hostStarted, Copy copy) {
+        if (!FollowsFireballs() || FireballFuse == null) {
+            return;
+        }
+
+        var id = fireball.GetInstanceID();
+        if (!hostStarted) {
+            FireballHeld[id] = (FireballFollow.Until(Time.time), copy);
+            return;
+        }
+
+        FireballHeld.Remove(id);
+        // its blast child is the host's here: FollowsParts sets the children before this, the last part
+        var blastOn = fireball.ExplosionChild != null && fireball.ExplosionChild.activeSelf;
+        var active = FireballActive?.GetValue(fireball) is true;
+        if (FireballFollow.BlowsNow(true, blastOn, active)) {
+            fireball.Break();
+        } else if (FireballFollow.StartsWarning(true, active, FireballWarning?.GetValue(fireball) is true, blastOn) &&
+                   FireballFuse.GetValue(fireball) is > 0f) {
+            FireballFuse.SetValue(fireball, 0f);
+        }
+    }
+
+    /// <summary>(coop, 0.3.21) Whether a copy is still followed: a game that runs another's room still has it.</summary>
+    private static bool StillFollowed(Copy copy) {
+        foreach (var component in Flinging) {
+            if (component.IsControlled && component._copies.ContainsValue(copy)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>(coop) The switch a twin skips: each fireball copy runs its own fuse again.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool FollowsFireballs() => true;
+
+    /// <summary>(coop) A fireball's Update (its fuse, its warning, its blast), not run while its copy is held.</summary>
+    private static void FireballUpdate(System.Action<FireballProjectile> orig, FireballProjectile self) {
+        if (self != null && FireballHeld.TryGetValue(self.GetInstanceID(), out var held)) {
+            // (coop, 0.3.21) a copy still followed stays held however late its updates come (FireballFollow)
+            if (FireballFollow.Holds(Time.time, held.Until, StillFollowed(held.Copy))) return;
+            FireballHeld.Remove(self.GetInstanceID());
+        }
+
+        orig(self);
+    }
 
     /// <summary>
     /// (coop) Whether a stage object with a rest state is at rest (its first FSM in that state), so not out.
@@ -574,7 +694,14 @@ internal class ThrownComponent : EntityComponent {
             switch (copy.Parts[i]) {
                 case GameObject child:
                     if (child.activeSelf != PartBits.IsOn(parts, i)) {
+                        var wasOn = child.activeSelf;
                         child.SetActive(PartBits.IsOn(parts, i));
+                        if (PartStart.Evaluates(wasOn, child.activeSelf)) {
+                            // (coop, 0.3.21) its animations' first frame now, not its last pose (PartStart)
+                            foreach (var animator in child.GetComponentsInChildren<Animator>()) {
+                                if (animator.isActiveAndEnabled) animator.Update(0f);
+                            }
+                        }
                     }
 
                     break;
@@ -583,6 +710,9 @@ internal class ThrownComponent : EntityComponent {
                     break;
                 case Renderer renderer:
                     renderer.enabled = PartBits.IsOn(parts, i);
+                    break;
+                case FireballProjectile fireball:
+                    FollowsFireball(fireball, PartBits.IsOn(parts, i), copy);
                     break;
             }
         }
@@ -658,11 +788,14 @@ internal class ThrownComponent : EntityComponent {
         }
 
         foreach (var other in _ended) {
+            GiveBack(_copies[other]);
             _copies.Remove(other);
         }
 
         _ended.Clear();
+        if (_copies.TryGetValue(number, out var before)) GiveBack(before);
         var followed = new Copy(copy);
+        Animate(followed);
         _copies[number] = followed;
         if (_targets.TryGetValue(number, out var target)) {
             Give(followed, target);
@@ -818,6 +951,13 @@ internal class ThrownComponent : EntityComponent {
             data.Packet.Write(damage);
         }
 
+        // (coop) and how much each of its enemy damagers deals: a falling boulder breaks the props it falls through
+        var breaks = StageBreaks.Pack(System.Array.ConvertAll(followed.EnemyDamagers, d => d != null ? d.damageDealt : 0));
+        data.Packet.Write((byte) breaks.Length);
+        foreach (var amount in breaks) {
+            data.Packet.Write(amount);
+        }
+
         if (number < FirstStageNumber) {
             data.Packet.Write(followed.Spawner.Fsm);
             data.Packet.Write(followed.Spawner.State);
@@ -862,7 +1002,7 @@ internal class ThrownComponent : EntityComponent {
             }
 
             FollowsParts(copy, target.Parts);
-            FollowsDamage(copy, target.Damages);
+            FollowsDamage(copy, target.Damages, target.EnemyDamages);
             var position = target.Position + target.Velocity * age;
             var transform = copy.GameObject.transform;
             // (coop) a prediction into the ground stops at the scene host's own last place: checked from the copy's place
@@ -884,11 +1024,39 @@ internal class ThrownComponent : EntityComponent {
         }
 
         foreach (var number in _ended) {
+            GiveBack(_copies[number]);
             _copies.Remove(number);
         }
 
         _ended.Clear();
     }
+
+    /// <summary>
+    /// (coop, 0.3.21) A new copy's culled Animators that key no events always animate while it is a copy: culled off
+    /// camera, its explosion held the frame with its hero damager on and wrote it once in view, after the parts
+    /// follow had turned it off (the friend's one-frame late Rock Roller blast).
+    /// </summary>
+    private static void Animate(Copy copy) {
+        foreach (var animator in copy.GameObject.GetComponentsInChildren<Animator>(true)) {
+            if (!ThrownCopies.Animates(animator.cullingMode != AnimatorCullingMode.AlwaysAnimate, HasEvents(animator)) ||
+                !Culling.Hold(animator, animator.cullingMode)) continue;
+            animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            copy.Animating.Add(animator);
+        }
+    }
+
+    /// <summary>(coop, 0.3.21) A copy that ends gives its Animators their own modes back (the pool's next use of
+    /// them may be this game's own).</summary>
+    private static void GiveBack(Copy copy) {
+        foreach (var animator in copy.Animating) {
+            if (Culling.Release(animator, out var mode) && animator != null) animator.cullingMode = mode;
+        }
+
+        copy.Animating.Clear();
+    }
+
+    private static bool HasEvents(Animator animator) => animator.runtimeAnimatorController != null &&
+        System.Array.Exists(animator.runtimeAnimatorController.animationClips, c => c != null && c.events.Length > 0);
 
     /// <summary>
     /// (coop) Other games, each physics step: a copy whose body has carried it <see cref="RunOn.Limit"/> past its last
@@ -1013,7 +1181,7 @@ internal class ThrownComponent : EntityComponent {
             }
 
             FollowsParts(copy, target.Parts);
-            FollowsDamage(copy, target.Damages);
+            FollowsDamage(copy, target.Damages, target.EnemyDamages);
         }
     }
 
@@ -1140,12 +1308,157 @@ internal class ThrownComponent : EntityComponent {
             if (!component.IsControlled) {
                 component.Track(spawned, FlungThrows.Marker, 0, 0);
             } else if (FollowsFlung()) {
-                spawned.SetActive(false);
+                if (RecyclesFlung()) {
+                    ObjectPool.Recycle(spawned);
+                } else {
+                    spawned.SetActive(false);
+                }
             }
 
             return;
         }
     }
+
+    /// <summary>
+    /// (coop, 0.3.21) Followed item drops out in this game (the scene host's own and the other games' made ones): an
+    /// arrived take of their item hides one (HidesTakenDrops). The game keeps no saved flag for a dropped item
+    /// (CollectableItemPickup.SetItem drops its persistence), so SSMP's saved-object sync never hid one.
+    /// </summary>
+    private static readonly List<GameObject> Drops = [];
+
+    private static readonly FieldInfo? DropGroupsField =
+        typeof(HealthManager).GetField("itemDropGroups", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    /// <summary>(coop) An enemy's drop table: its groups' drops, each its item and custom pickup (both games' alike).</summary>
+    private static List<List<(SavedItem? Item, CollectableItemPickup? Prefab)>> DropTable(HealthManager enemy) {
+        var table = new List<List<(SavedItem?, CollectableItemPickup?)>>();
+        if (DropGroupsField?.GetValue(enemy) is not System.Collections.IEnumerable groups) return table;
+        foreach (var group in groups) {
+            var drops = group?.GetType().GetField("Drops")?.GetValue(group) as System.Collections.IEnumerable;
+            table.Add(drops == null ? [] : drops.Cast<object>().Select(d => (
+                d.GetType().GetProperty("Item")?.GetValue(d) as SavedItem,
+                d.GetType().GetField("CustomPickupPrefab")?.GetValue(d) as CollectableItemPickup)).ToList());
+        }
+
+        return table;
+    }
+
+    /// <summary>(coop) The component that follows this enemy's item drops, or null.</summary>
+    private static ThrownComponent? DropperOf(HealthManager enemy) {
+        foreach (var component in Flinging) {
+            if (component._flinger != null && FlungThrows.DropsFollowed(component._flinger) &&
+                (component.GameObject.Host == enemy.gameObject || component.GameObject.Client == enemy.gameObject)) {
+                return component;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// (coop, 0.3.21) Called by the SpawnItemDrop hook: whether this game leaves its own roll's drop out, as another
+    /// game runs this enemy and the scene host's drop comes (rag_drop: the scene host's roll decides).
+    /// </summary>
+    internal static bool SkipsOwnDrop(HealthManager enemy) => FollowsDrops() && DropperOf(enemy) is { IsControlled: true };
+
+    /// <summary>(coop, 0.3.21) Scene host: its enemy's item drop, just flung, followed as a drop of that table index.</summary>
+    internal static void DropFlung(HealthManager? enemy, SavedItem? item, GameObject flung) {
+        var dropIndex = enemy != null && item != null ? FlungThrows.DropIndex(DropTable(enemy), d => d.Item == item) : null;
+        if (!FlungThrows.SendsFling(enemy != null && item != null, dropIndex) || !FollowsDrops() ||
+            DropperOf(enemy!) is not { IsControlled: false } component || dropIndex is not { } index) return;
+        component.Track(flung, FlungThrows.Marker, FlungThrows.DropKind, index);
+        Drops.Add(flung);
+        Logger.Info($"(coop) Drop {item.name} of {enemy.name} followed (index {index})");
+    }
+
+    /// <summary>(coop, 0.3.21) Other games: the scene host's drop made here from this enemy's own drop table.</summary>
+    private GameObject? SpawnsDrop(byte index) {
+        var holder = GameObject.Host != null ? GameObject.Host : GameObject.Client;
+        if (holder == null || !holder.TryGetComponent<HealthManager>(out var enemy)) return null;
+        var (item, prefab) = FlungThrows.DropAt(DropTable(enemy), index);
+        if (item == null) return null;
+        var made = Object.Instantiate(prefab != null ? prefab : GlobalSettings.Gameplay.CollectableItemPickupInstantPrefab);
+        made.SetItem(item);
+        Drops.Add(made.gameObject);
+        Logger.Info($"(coop) Drop {item.name} of {holder.name} made from the scene host's (index {index})");
+        return made.gameObject;
+    }
+
+    /// <summary>
+    /// (coop, 0.3.21) Another player's take of an item arrived (its amount up): that many of this game's followed drops of
+    /// it go, as the taker's went (rag_drop: one rag, one count). shortcut: a take of that item in another room hides one
+    /// here too; tie a take to its drop if a room shows that.
+    /// </summary>
+    internal static void HidesTakenDrops(string item, int taken) {
+        Drops.RemoveAll(drop => drop == null);
+        foreach (var drop in Drops.ToList()) {
+            if (taken <= 0) break;
+            if (!drop.activeSelf || !drop.TryGetComponent<CollectableItemPickup>(out var pickup) ||
+                pickup.Item == null || pickup.Item.name != item) continue;
+            drop.SetActive(false);
+            Drops.Remove(drop);
+            taken--;
+            Logger.Info($"(coop) Drop {item} hidden: another player took theirs");
+        }
+    }
+
+    /// <summary>
+    /// (coop) Whether the other games' item drops are the scene host's. Not inlined: rag_drop's twin skips it, which
+    /// gives false: each game rolls its own again.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool FollowsDrops() => true;
+
+    /// <summary>
+    /// (coop, 0.3.21) Called by the FlingObject hook before an enemy's death flings its pickup (FlungThrows.IsPickup: the
+    /// Rock Roller's wish item). In the other games their own pickup is held back unflung and hidden, then follows the
+    /// scene host's through its flight and rest (PickupPairs): whether the fling is left out here.
+    /// </summary>
+    internal static bool SkipsPickupFling(GameObject? thrower, GameObject? flung) {
+        if (thrower == null || flung == null || !FollowsPickups()) return false;
+        foreach (var component in Flinging) {
+            if (component._flinger == null || !component.IsControlled ||
+                !FlungThrows.IsPickup(component._flinger, thrower.name, flung.name)) continue;
+            flung.SetActive(false);
+            if (component._pickups.Own(flung) is { } number) component.FollowPickup(number, flung);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>(coop, 0.3.21) Scene host: its enemy's death pickup, just flung, followed as a flung throw.</summary>
+    internal static void PickupFlung(GameObject? thrower, GameObject? flung) {
+        if (thrower == null || flung == null) return;
+        foreach (var component in Flinging) {
+            if (component._flinger == null || component.IsControlled ||
+                !FlungThrows.IsPickup(component._flinger, thrower.name, flung.name)) continue;
+            component.Track(flung, FlungThrows.Marker, FlungThrows.PickupKind, 0);
+            return;
+        }
+    }
+
+    /// <summary>(coop) Other games: this game's own pickup, shown again, follows the scene host's of that number.</summary>
+    private void FollowPickup(byte number, GameObject own) {
+        own.SetActive(true);
+        Follow(number, own);
+    }
+
+    /// <summary>
+    /// (coop) Whether the other games' death pickups follow the scene host's. Not inlined: wish_message's pickup twin
+    /// skips it, which gives false: each game flings its own again.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool FollowsPickups() => true;
+
+    /// <summary>
+    /// (coop) Whether the other games put their own flung object back in the game's pool rather than only hiding it: the
+    /// pool's Spawn had unparented it from the GlobalPool, so a hidden one stayed a root in DontDestroyOnLoad that no room
+    /// change removes (14 of the Widow's bells after one fight in the friend's game, none in the game alone:
+    /// probe_bell_rest). Not inlined: offworld_bells' twin skips it, which gives false.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool RecyclesFlung() => true;
 
     /// <summary>
     /// (coop) Other games: whether a replayed spawn of this prefab by this object is left out, as the scene host's
@@ -1161,6 +1474,18 @@ internal class ThrownComponent : EntityComponent {
 
         return false;
     }
+
+    /// <summary>
+    /// (coop) Other games: whether their own FSM's spawn of a followed throw is left out before it spawns anything:
+    /// spawned and put back in the pool in its frame (Flung), each Rock Roller Bomb's OnEnable had still started its
+    /// flight loop, a second start beside the scene host's copy (the friend's game, Bone_06, 2026-11-10).
+    /// </summary>
+    internal static bool SkipsOwnFling(GameObject? thrower, GameObject? prefab) =>
+        SkipsOwnFlings() && SuppressesFlung(thrower, prefab);
+
+    /// <summary>(coop) The switch a twin skips: the other games spawn their own throw again (then put it back).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool SkipsOwnFlings() => true;
 
     /// <summary>
     /// (coop) Other games: a copy of what the scene host's throw flung, from this game's pool, then followed.
@@ -1205,11 +1530,62 @@ internal class ThrownComponent : EntityComponent {
     /// <inheritdoc />
     public override void InitializeHost(uint sceneHostEpoch) {
         WakesResting();
+        LetsPickupsFall();
+        foreach (var copy in _copies.Values) GiveBack(copy);
         _copies.Clear();
         _targets.Clear();
         _endedItself.Clear();
         _stageCopies.Clear();
         _stageOut.Clear();
+    }
+
+    /// <summary>
+    /// (coop, 0.3.21) As this game takes the room over, its death pickups are its own again (LetsPickupGo). One held
+    /// back that no host's came for shows where it lies (it is never flung here).
+    /// </summary>
+    private void LetsPickupsFall() {
+        foreach (var own in _pickups.Clear()) {
+            if (own != null) own.SetActive(true);
+        }
+
+        foreach (var (number, copy) in _copies) {
+            if (_targets.TryGetValue(number, out var target)) LetsPickupGo(copy, target);
+        }
+    }
+
+    /// <summary>
+    /// (coop, 0.3.21) A death pickup no longer followed (the scene host's update no longer names it, or this game takes
+    /// the room over) goes back to the host's last place and velocity, so its own physics lands it: left at its
+    /// predicted place it fell out of the room (Bone_07, the host gone 0.4 to 1.9 s into its flight: y -1760,
+    /// 2026-11-10_203706-pair2 and 205701-pair2).
+    /// </summary>
+    private static void LetsPickupGo(Copy copy, Target target) {
+        if (copy.GameObject == null || !FlungThrows.IsFlung(target.Spawner.Fsm) ||
+            !(FlungThrows.IsPickupKind(target.Spawner.State) || FlungThrows.IsDropKind(target.Spawner.State))) return;
+        var transform = copy.GameObject.transform;
+        // (coop) its parts on again, as its own game has them: the host's last update, as its room unloaded, may have them
+        // off (let go even at rest, it fell out of Bone_07 and could not be taken: 212111 and 213028-pair2)
+        var off = new List<string>();
+        foreach (var part in copy.Parts) {
+            switch (part) {
+                case Collider2D { enabled: false } collider:
+                    off.Add(collider.name + " " + collider.GetType().Name);
+                    collider.enabled = true;
+                    break;
+                case Renderer { enabled: false } renderer:
+                    off.Add(renderer.name + " " + renderer.GetType().Name);
+                    renderer.enabled = true;
+                    break;
+            }
+        }
+
+        Logger.Info($"(coop) Pickup {copy.GameObject.name} let go at the scene host's {target.Position}, velocity " +
+                    $"{target.Velocity} (it was at {transform.position}); parts it had off: [{string.Join(", ", off)}]");
+        transform.position = new Vector3(target.Position.x, target.Position.y, transform.position.z);
+        if (copy.GameObject.TryGetComponent<Rigidbody2D>(out var body)) {
+            body.position = target.Position;
+            body.linearVelocity = target.Velocity;
+        }
     }
 
     /// <summary>
@@ -1333,6 +1709,23 @@ internal class ThrownComponent : EntityComponent {
         _stageFollowed.Clear();
         _stageSentOut.Clear();
         _lastOrder = -1;
+        RestsUntilTold();
+    }
+
+    /// <summary>
+    /// (coop) Other games: until the scene host's first update says which stage objects are out, each with a rest state
+    /// counts as at rest there, so the follow switches this game's own off from its first frame (and wakes them at a
+    /// takeover, WakesResting). The Skull King's copy stomped before the host's first update came: the friend's own
+    /// Boulders Battle shook a boulder of its own pick, switched off a frame later but heard (62 of 80 boulder_drops
+    /// runs). Not inlined: boulder_drops' twin skips it.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void RestsUntilTold() {
+        foreach (var (number, (_, _, rest)) in _stage) {
+            if (rest != null && !_stageOut.ContainsKey(number)) {
+                _stageOut[number] = false;
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -1408,10 +1801,31 @@ internal class ThrownComponent : EntityComponent {
                 target.Damages[j] = data.Packet.ReadByte();
             }
 
+            var breakBytes = data.Packet.ReadByte();
+            if (target.EnemyDamages.Length != breakBytes) {
+                target.EnemyDamages = new byte[breakBytes];
+            }
+
+            for (var j = 0; j < breakBytes; j++) {
+                target.EnemyDamages[j] = data.Packet.ReadByte();
+            }
+
             if (number < FirstStageNumber) {
                 target.Spawner = (data.Packet.ReadByte(), data.Packet.ReadByte(), data.Packet.ReadByte());
                 target.Scale = new Vector2(data.Packet.ReadFloat(), data.Packet.ReadFloat());
-                if (FlungThrows.IsFlung(target.Spawner.Fsm)) {
+                if (FlungThrows.IsFlung(target.Spawner.Fsm) && FlungThrows.IsDropKind(target.Spawner.State)) {
+                    // (coop) an enemy's item drop: made here from the same drop table, it follows the scene host's
+                    if (FlungThrows.NeedsCopy(_copies.ContainsKey(number), _flungCopied.Contains(number)) && FollowsDrops()) {
+                        if (SpawnsDrop(target.Spawner.Action) is { } made) Follow(number, made);
+                        _flungCopied.Add(number);
+                    }
+                } else if (FlungThrows.IsFlung(target.Spawner.Fsm) && FlungThrows.IsPickupKind(target.Spawner.State)) {
+                    // (coop) a death pickup: this game's own, held back, follows it (SkipsPickupFling)
+                    if (FlungThrows.NeedsCopy(_copies.ContainsKey(number), _flungCopied.Contains(number)) && FollowsPickups()) {
+                        if (_pickups.Host(number) is { } own) FollowPickup(number, own);
+                        _flungCopied.Add(number);
+                    }
+                } else if (FlungThrows.IsFlung(target.Spawner.Fsm)) {
                     if (FlungThrows.NeedsCopy(_copies.ContainsKey(number), _flungCopied.Contains(number)) && FollowsFlung()) {
                         CopiesFlung(number, target);
                         _flungCopied.Add(number);
@@ -1452,7 +1866,9 @@ internal class ThrownComponent : EntityComponent {
                 copy.GameObject.SetActive(false);
             }
 
+            if (copy != null && _targets.TryGetValue(number, out var last)) LetsPickupGo(copy, last);
             _targets.Remove(number);
+            if (_copies.TryGetValue(number, out var ending)) GiveBack(ending);
             _copies.Remove(number);
             _flungCopied.Remove(number);
             _endedItself.Remove(number);
@@ -1478,6 +1894,7 @@ internal class ThrownComponent : EntityComponent {
 
     /// <inheritdoc />
     public override void Destroy() {
+        foreach (var copy in _copies.Values) GiveBack(copy); // its room unloads
         Flinging.Remove(this);
         MonoBehaviourUtil.Instance.OnLateUpdateEvent -= OnLateUpdate;
         MonoBehaviourUtil.Instance.OnFixedUpdateEvent -= OnFixedUpdate;

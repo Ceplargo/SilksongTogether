@@ -4,6 +4,77 @@ using Xunit;
 namespace SSMP.Tests;
 
 public class FlungThrowsTests {
+    // the project, 2026-11-10 19:23: the Rock Roller's wish item falls and lands the same way in every game
+    [Fact]
+    public void A_rock_rollers_corpse_flings_its_wish_pickup() {
+        Assert.True(FlungThrows.IsPickup("Rock Roller", "Corpse Rock Roller(Clone)", "Rock Roller_item_Rock Rollers"));
+        Assert.False(FlungThrows.IsPickup("Rock Roller", "Corpse Rock Roller(Clone)", "Rock Roller Bomb(Clone)"));
+        Assert.False(FlungThrows.IsPickup("Bone Goomba", "Corpse Rock Roller(Clone)", "Rock Roller_item_Rock Rollers"));
+    }
+
+    [Fact]
+    public void A_pickup_kind_is_not_a_throws() {
+        Assert.True(FlungThrows.IsPickupKind(FlungThrows.PickupKind));
+        Assert.False(FlungThrows.IsPickupKind(0));
+    }
+
+    [Fact]
+    public void The_hosts_pickup_coming_first_waits_for_this_games() {
+        var pairs = new PickupPairs<string>();
+        Assert.Null(pairs.Host(7));
+        Assert.Equal((byte) 7, pairs.Own("own"));
+    }
+
+    [Fact]
+    public void This_games_pickup_coming_first_waits_for_the_hosts() {
+        var pairs = new PickupPairs<string>();
+        Assert.Null(pairs.Own("first"));
+        Assert.Null(pairs.Own("second"));
+        Assert.Equal("first", pairs.Host(3));
+        Assert.Equal("second", pairs.Host(4));
+        Assert.Null(pairs.Host(5));
+    }
+
+    // the scene host left before its pickup's number came (Bone_07): this game's own, held back, is its own again
+    [Fact]
+    public void A_hand_over_gives_back_this_games_unpaired_pickups() {
+        var pairs = new PickupPairs<string>();
+        Assert.Null(pairs.Own("held"));
+        Assert.Equal(["held"], pairs.Clear());
+        Assert.Empty(pairs.Clear());
+        Assert.Null(pairs.Host(2));
+        Assert.Empty(pairs.Clear());
+        Assert.Null(pairs.Own("after"));
+    }
+
+    // rag_drop: a Pilgrim's rag is the scene host's roll in every game; a Rock Roller's bombs are not drops
+    [Fact]
+    public void The_Marrows_Pilgrims_drops_are_followed() {
+        Assert.True(FlungThrows.DropsFollowed("Pilgrim 01"));
+        Assert.True(FlungThrows.DropsFollowed("Pilgrim Fly"));
+        Assert.False(FlungThrows.DropsFollowed("Rock Roller"));
+        Assert.True(FlungThrows.IsDropKind(FlungThrows.DropKind));
+        Assert.False(FlungThrows.IsDropKind(FlungThrows.PickupKind));
+    }
+
+    // the project 22:07: only item drops go out; a rosary or shell shard fling stays each game's own
+    [Fact]
+    public void A_money_fling_sends_nothing() {
+        Assert.False(FlungThrows.SendsFling(false, null));
+        Assert.False(FlungThrows.SendsFling(false, 0));
+        Assert.False(FlungThrows.SendsFling(true, null));
+        Assert.True(FlungThrows.SendsFling(true, 2));
+    }
+
+    [Fact]
+    public void A_drops_index_runs_across_its_groups_and_back() {
+        string[][] table = [["Shell Shard"], ["Rosary", "Pilgrim Rag"]];
+        Assert.Equal((byte) 2, FlungThrows.DropIndex(table, d => d == "Pilgrim Rag"));
+        Assert.Equal("Pilgrim Rag", FlungThrows.DropAt(table, 2));
+        Assert.Null(FlungThrows.DropIndex(table, d => d == "Mossberry"));
+        Assert.Null(FlungThrows.DropAt(table, 3));
+    }
+
     [Fact]
     public void The_Widows_slashes_fling_her_bells() {
         Assert.True(FlungThrows.Has("Spinner Boss"));
@@ -54,6 +125,22 @@ public class FlungThrowsTests {
         Assert.True(FlungThrows.NeedsCopy(hasCopy: false, copiedBefore: false));
         Assert.False(FlungThrows.NeedsCopy(hasCopy: false, copiedBefore: true));
         Assert.False(FlungThrows.NeedsCopy(hasCopy: true, copiedBefore: true));
+    }
+
+    [Fact]
+    public void A_Rock_Rollers_corpse_throws_its_death_bombs() {
+        // its Control FSM's Explode: 3 times SpawnObjectFromGlobalPool, then SetVelocity2d at a random speed
+        Assert.True(FlungThrows.Has("Rock Roller"));
+        Assert.Equal("Rock Roller Bomb", FlungThrows.Flung("Rock Roller"));
+        Assert.True(FlungThrows.ThrownBy("Rock Roller", "Corpse Rock Roller(Clone)"));
+        Assert.True(FlungThrows.IsFlungObject("Rock Roller", "Rock Roller Bomb(Clone)"));
+    }
+
+    [Fact]
+    public void A_living_Rock_Rollers_own_bombs_stay_its_throws() {
+        // its fight throws spawn the same bomb from its own FSM: followed by number, not as flung
+        Assert.False(FlungThrows.ThrownBy("Rock Roller", "Rock Roller"));
+        Assert.False(FlungThrows.ThrownBy("Rock Roller", "Rock Roller(Clone)"));
     }
 
     [Fact]

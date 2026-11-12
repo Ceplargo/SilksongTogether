@@ -49,18 +49,22 @@ internal static class ModSaveLifecycle {
     }
 
     /// <summary>
-    /// The global save data at host start: the host's loaded save, plus what only the mod save holds (world objects
-    /// such as walls and levers). The host's save wins: the host may have played on alone since the mod save was
-    /// written, and a mod save from an older version lacks values that sync now.
+    /// The global save data at host start: the host's loaded save, plus what only the mod save holds. The host's save
+    /// wins: the host may have played on alone since the mod save was written, and a mod save from an older version
+    /// lacks values that sync now. (coop, 0.3.21) World objects (hostOnly) come from the host's save alone: its game
+    /// stores every arriving one, and it never keeps a semi-persistent one (a killed Pilgrim), which a mod save did.
     /// </summary>
     /// <param name="hostSave">The global save data from the host's loaded save.</param>
     /// <param name="modSave">The global save data from the mod save.</param>
+    /// <param name="hostOnly">Whether a value is the host's save's alone (a world object's).</param>
     public static Dictionary<ushort, byte[]> MergeGlobalSaveData(
         Dictionary<ushort, byte[]> hostSave,
-        Dictionary<ushort, byte[]> modSave
+        Dictionary<ushort, byte[]> modSave,
+        Func<ushort, bool> hostOnly
     ) {
         var merged = new Dictionary<ushort, byte[]>(hostSave);
         foreach (var (index, value) in modSave) {
+            if (hostOnly(index)) continue;
             merged.TryAdd(index, value);
         }
 

@@ -10,8 +10,15 @@ namespace SSMP.Game.Client.Entity.Component;
 /// This component starts and stops an entity's looping sounds on its copy as the scene host's start and stop: loops that
 /// a component of the entity's own plays (a Crawler's or a Walker's walk and run loops, which SSMP takes off copies), so
 /// no copied action plays them. The friend heard none of the walking enemies' loops (the Fields Goombas' run loop: 69 of
-/// 69 missing at the Ant Trapper; the Dock Foremen's shield dockworkers').
+/// 69 missing at the Ant Trapper; the Dock Foremen's shield dockworkers'). (coop, 0.3.21) Each playing loop's clip goes
+/// with it, and the copy's source takes it: a clip set in a state no copy runs (the pilgrims' Walk sets their idle voice)
+/// was never set on the copy, which looped its prefab's (Bone_07's Pilgrim 01 sang P1_sing to the host's
+/// P2_idle_loop_01).
 internal class AudioLoopComponent : EntityComponent {
+    /// <summary>(coop) The loaded clips by name, for a copy's loop to take the scene host's.</summary>
+    private static readonly ByName<AudioClip> Clips = new(Resources.FindObjectsOfTypeAll<AudioClip>, clip => clip.name,
+        clip => clip != null);
+
     /// <summary>The sound sources on the host object, in hierarchy order.</summary>
     private readonly AudioSource[] _hostSources;
 
@@ -20,7 +27,14 @@ internal class AudioLoopComponent : EntityComponent {
 
     /// <summary>Whether each host source last played a loop, as last sent.</summary>
     private readonly bool[] _lastPlaying;
+
+    /// <summary>(coop) The clip each host source last played a loop of, as last sent ("" for none).</summary>
+    private readonly string[] _lastClips;
     private readonly LoopStarts[] _sourceStarts;
+
+    /// <summary>(coop) The starts on the client clone's sources, for when the copy last played each (none for a source
+    /// the clone lacks).</summary>
+    private readonly LoopStarts?[] _copyStarts;
     private readonly uint[] _lastSentStarts;
     private readonly uint[] _lastReceivedStarts;
     private readonly bool[] _lastReceivedPlaying;
@@ -43,7 +57,9 @@ internal class AudioLoopComponent : EntityComponent {
         _hostSources = hostSources;
         _clientSources = clientSources;
         _lastPlaying = hostSources.Select(source => PlaysLoop(source, false)).ToArray();
+        _lastClips = hostSources.Select(ClipName).ToArray();
         _sourceStarts = hostSources.Select(LoopStarts.Watch).ToArray();
+        _copyStarts = LoopStarts.WatchCopies(clientSources);
         _lastSentStarts = new uint[hostSources.Length];
         _lastReceivedStarts = new uint[clientSources.Length];
         _lastReceivedPlaying = new bool[clientSources.Length];
@@ -59,6 +75,9 @@ internal class AudioLoopComponent : EntityComponent {
     private static bool PlaysLoop(AudioSource? source, bool before) =>
         source != null && source.loop && source.isPlaying && (before || source.clip == null || source.timeSamples > 0);
 
+    /// <summary>(coop) The name of the clip a source holds, or "" for none.</summary>
+    private static string ClipName(AudioSource? source) => source != null && source.clip != null ? source.clip.name : "";
+
     /// <summary>Send loop starts and stops, including a Play call while the same loop is already playing.</summary>
     /// <inheritdoc />
     public override void OnUpdate() {
@@ -70,11 +89,13 @@ internal class AudioLoopComponent : EntityComponent {
         for (var i = 0; i < _hostSources.Length; i++) {
             var playing = PlaysLoop(_hostSources[i], _lastPlaying[i]);
             var starts = _sourceStarts[i].Number;
-            if (playing != _lastPlaying[i] || (playing && starts != _lastSentStarts[i])) {
+            var clip = ClipName(_hostSources[i]);
+            if (playing != _lastPlaying[i] || (playing && (starts != _lastSentStarts[i] || clip != _lastClips[i]))) {
                 changed = true;
             }
             _lastPlaying[i] = playing;
             _lastSentStarts[i] = starts;
+            _lastClips[i] = clip;
         }
 
         if (!changed && _sent) {
@@ -90,6 +111,7 @@ internal class AudioLoopComponent : EntityComponent {
         for (var i = 0; i < _lastPlaying.Length; i++) {
             data.Packet.Write(_lastPlaying[i]);
             data.Packet.Write(_lastSentStarts[i]);
+            data.Packet.Write(_lastClips[i]);
         }
 
         SendData(data);
@@ -118,6 +140,7 @@ internal class AudioLoopComponent : EntityComponent {
         for (var i = 0; i < length; i++) {
             var playing = data.Packet.ReadBool();
             var starts = data.Packet.ReadUInt();
+            var clip = data.Packet.ReadString();
             if (!FollowsLoops() || i >= _clientSources.Length) {
                 continue;
             }
@@ -134,10 +157,25 @@ internal class AudioLoopComponent : EntityComponent {
                 continue;
             }
 
-            if (LoopStarts.NeedsPlay(playing, source.isPlaying, previous, starts, wasReportedPlaying)) {
+            // the scene host's loop plays another clip: the copy takes it and plays it from its start
+            if (playing && clip.Length > 0 && clip != ClipName(source) && FollowsLoopClips() &&
+                Clips.Find(clip) is { } found) {
+                source.clip = found;
+                source.Play();
+                continue;
+            }
+
+            // a position is read only from a clip: on any other sound resource Unity ignores it with a warning;
+            // (coop, 0.3.21) a loop the copy itself played in the last LoopStarts.StartS has not moved yet (a source the
+            // clone lacks was skipped above, so its starts are there)
+            var moves = source.clip == null || source.timeSamples > 0
+                || LoopStarts.JustStarted(_copyStarts[i]!.PlayedAt, Time.unscaledTime);
+            var looping = LoopStarts.CopyLoops(source.isPlaying, moves, wasReportedPlaying);
+            if (LoopStarts.NeedsPlay(playing, looping, previous, starts, wasReportedPlaying)) {
                 source.Play();
             } else if (!playing && source.isPlaying) {
                 source.Stop();
+                _copyStarts[i]!.Stopped();
             }
         }
     }
@@ -145,6 +183,11 @@ internal class AudioLoopComponent : EntityComponent {
     /// <summary>Whether a copy's loops follow the host's. Not inlined: the enemy_loops check's twin skips it.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static bool FollowsLoops() => true;
+
+    /// <summary>(coop) Whether a copy's loops take the scene host's clip. Not inlined: delayed_voice's twin skips it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool FollowsLoopClips() => true;
 
     /// <inheritdoc />
     public override void Destroy() {
