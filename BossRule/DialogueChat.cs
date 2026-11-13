@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using TeamCherry.Localization;
 using UnityEngine;
 
@@ -23,7 +24,9 @@ internal static class DialogueChat {
     public static void Received(string body) {
         switch (DialogueShare.Decode(body)) {
             case QuestNote note:
-                Chat(DialogueShare.QuestLine(note.Talker, QuestName(note.QuestKey), note.Done));
+                TakeQuest(note);
+                // (0.3.22, rule A2) another player's hand-in pays this player its money or rosary set reward too
+                if (note.Done) QuestRewards.Received(note.QuestKey);
                 break;
             case FoundNote found:
                 TakeFind(found);
@@ -89,6 +92,41 @@ internal static class DialogueChat {
             Chat(DialogueShare.FoundLine(found.Finder, name, QuestName(found.QuestKey), found.Count, found.Needed));
         }
     }
+
+    /// <summary>
+    /// (0.3.22, rule A4) Another player's quest taken or finished: in this player's room and view (and nothing keeping
+    /// them busy), the game's own accepted or completed message, as a find shows; else 0.3.21's chat line "Ann took X".
+    /// A delivery's accept also names its carrier (rule A1: the player who took it). Only shown: it holds no one
+    /// (probe_quest_prompt).
+    /// </summary>
+    private static void TakeQuest(QuestNote note) {
+        var quest = QuestManager.GetQuest(note.QuestKey) as FullQuestBase;
+        var where = Where.Chat;
+        if (ShowsQuestMessages() && quest != null && GameManager.SilentInstance is { } gm) {
+            var (view, busy) = (MyView(), BusyWhy(gm));
+            where = DialogueShare.Route(note, gm.sceneName, view, busy != "");
+            Debug.Log($"[BossRule] Quest received: {note.Talker}'s {note.QuestKey} {(note.Done ? "finished" : "taken")} to " +
+                      $"the {where} (here {gm.sceneName}, view {view}, talker at {note.X:0.#}, {note.Y:0.#} in {note.Scene}" +
+                      $"{(busy == "" ? "" : ", busy: " + busy)})");
+        }
+
+        if (where == Where.Screen) {
+            // shortcut: a quest with a previous one shows the game's continue popup alone, not handled here; the
+            // accepted message stands in for it
+            if (note.Done) QuestManager.ShowQuestCompleted(quest!, null);
+            else QuestManager.ShowQuestAccepted(quest!, null);
+        } else {
+            Chat(DialogueShare.QuestLine(note.Talker, QuestName(note.QuestKey), note.Done));
+        }
+
+        if (!note.Done && quest != null && quest.Targets.Any(t => t.Counter is DeliveryQuestItem)) {
+            Chat(DialogueShare.CarrierLine(note.Talker, QuestName(note.QuestKey)));
+        }
+    }
+
+    /// <summary>Whether another player's quest shows here as the game's message. Not inlined: quest_messages' twin skips it.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    public static bool ShowsQuestMessages() => true;
 
     private static System.Collections.IEnumerator ShowFind(CollectableItem item, int amount) {
         var until = Time.unscaledTime + 3f;  // the amount comes by SSMP's save sync, a moment after

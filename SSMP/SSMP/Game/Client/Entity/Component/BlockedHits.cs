@@ -9,8 +9,9 @@ namespace SSMP.Game.Client.Entity.Component;
 /// (Bone_09's Dock Flyer blocking a DF Lava Rock: sword_hit_reject in the scene host's game, none in the other,
 /// 2026-11-11_095325-enemies-pair4). The scene host's game sends each block of a world object's hit it shows, with
 /// where its flash went (a BlockedHit entry), and each copy shows its own enemy's block there; a copy shows no block of
-/// its own for a world object's hit, so one that lands there too does not show it twice. A player's hit is left to the
-/// copied swings, as before. Unity-free, so it is tested without the game.
+/// its own for a world object's hit, so one that lands there too does not show it twice. (0.3.22) A player's block is
+/// the hitter's game's: it sends the block of its own hit it shows, and the others show none of their own for it
+/// (Bone_06's Rock Roller starting to roll clinked on the hitter's screen only). Unity-free, so it is tested without the game.
 /// </summary>
 internal static class BlockedHits {
     /// <summary>Whether a hit is a world object's: neither this game's hero's (local) nor another player's (remotePlayer),
@@ -51,6 +52,18 @@ internal static class BlockedHits {
         };
     }
 
+    /// <summary>
+    /// (0.3.22) Whether this game sends its enemy's block of its own hero's hit (local), in any game, the scene host's or a
+    /// copy's: the hitter's game decides a player's block, as it does the hit's damage, and the block showed now (blocked,
+    /// tinkBefore, tinkAfter: as Sends).
+    /// </summary>
+    public static bool SendsPlayer(bool local, bool blocked, float tinkBefore, float tinkAfter) =>
+        local && blocked && tinkBefore <= 0f && tinkAfter > 0f && SendsPlayerBlocks();
+
+    /// <summary>(0.3.22) Whether this game shows no block of its own for another player's hit (remotePlayer): the
+    /// hitter's game sends the block it shows.</summary>
+    public static bool LeavesOutPlayer(bool remotePlayer) => remotePlayer;
+
     /// <summary>The switch blocked_hit_copy's twin turns off (a skipped bool method returns false): no block sent.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool SendsWorldBlocks() => true;
@@ -59,4 +72,9 @@ internal static class BlockedHits {
     /// block of a world object's hit too.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool LeavesOutCopyBlocks() => true;
+
+    /// <summary>The switch player_blocks' twin turns off: no player's block sent (each game left with none of its own
+    /// for another player's hit).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool SendsPlayerBlocks() => true;
 }

@@ -35,6 +35,11 @@ internal class SaveChanges {
     };
 
     /// <summary>
+    /// Whether an arrival of this PlayerData name is followed by a refresh (its value before the arrival is read).
+    /// </summary>
+    public static bool Refreshed(string name) => Refreshes.ContainsKey(name);
+
+    /// <summary>
     /// Values from other players that wait for the refresh until the hero is in control.
     /// </summary>
     private readonly ArrivalQueue _arrivals = new();
@@ -45,11 +50,13 @@ internal class SaveChanges {
     /// For example, a breakable wall that also opens up in another scene or a stag station being bought.
     /// </summary>
     /// <param name="name">The name of the PlayerData entry.</param>
-    public void ApplyPlayerDataSaveChange(string? name) {
+    /// <param name="own">This game's value before the arrival (read only for the names a refresh follows).</param>
+    /// <param name="arrived">The arrived value.</param>
+    public void ApplyPlayerDataSaveChange(string? name, object? own, object? arrived) {
         Logger.Debug($"ApplyPlayerData for name: {name}");
 
         if (name != null && Refreshes.ContainsKey(name)) {
-            _arrivals.Add(name);
+            _arrivals.Add(name, own, arrived);
         }
         
         var currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;

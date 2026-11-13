@@ -210,6 +210,8 @@ internal class BossRuleClientAddon : ClientAddon {
         receiver.RegisterPacketHandler<Mark>(BossPacketId.Mark, Marks.Received);
         receiver.RegisterPacketHandler<DropTaken>(BossPacketId.DropTaken, DropShare.Received);
         receiver.RegisterPacketHandler<TollCoins>(BossPacketId.TollCoins, TollFollow.Received);
+        receiver.RegisterPacketHandler<GreetingState>(BossPacketId.Greeting, GreetingFollow.Received);
+        receiver.RegisterPacketHandler<FightFrame>(BossPacketId.Fight, FightFollow.Received);
 
         _gate = new StartGate(clientApi.ClientManager,
             (scene, message) => sender.SendSingleData(BossPacketId.WaitStatus, new WaitStatus { Scene = scene, Message = message }),
@@ -230,12 +232,19 @@ internal class BossRuleClientAddon : ClientAddon {
             DialogueHooks.Send = body => sender.SendCollectionData(BossPacketId.Dialogue, new DialogueMessage { Body = body });
             DropShare.Send = (scene, id) => sender.SendSingleData(BossPacketId.DropTaken, new DropTaken { Scene = scene, Id = id });
             TollFollow.Send = (scene, state) => sender.SendSingleData(BossPacketId.TollCoins, new TollCoins { Scene = scene, State = state });
+            GreetingFollow.Send = (scene, fsm, state) =>
+                sender.SendCollectionData(BossPacketId.Greeting, new GreetingState { Scene = scene, Fsm = fsm, State = state });
+            FightFollow.Send = frame => sender.SendCollectionData(BossPacketId.Fight, frame);
+            FightFollow.SceneHost = () => clientApi.ClientManager.IsSceneHost;
         };
         clientApi.ClientManager.DisconnectEvent += () => {
             _connected = false;
             DialogueHooks.Send = null;
             DropShare.Send = null;
             TollFollow.Send = null;
+            GreetingFollow.Send = null;
+            FightFollow.Send = null;
+            FightFollow.SceneHost = null;
             DropShare.Reset();
             DialogueChat.Reset();
             StartGate.ForgetRoom();

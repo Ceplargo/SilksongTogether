@@ -19,7 +19,7 @@ public class BossRulePlugin : BaseUnityPlugin {
     /// server refuses a friend whose version differs, since synced values travel as positions in a list built into
     /// the mod.
     /// </summary>
-    internal const string Version = "0.3.21";
+    internal const string Version = "0.3.22";
 
     private BossRuleClientAddon? _client;
 
@@ -76,6 +76,22 @@ public class BossRulePlugin : BaseUnityPlugin {
             postfix: new HarmonyMethod(typeof(DropShare), nameof(DropShare.DropItemPostfix)));
         harmony.Patch(AccessTools.Method(typeof(PlayAudioEventBase), nameof(PlayAudioEventBase.OnEnter)),
             postfix: new HarmonyMethod(typeof(TollFollow), nameof(TollFollow.AudioPostfix)));
+        harmony.Patch(AccessTools.Method(typeof(FsmState), nameof(FsmState.OnEnter)),
+            prefix: new HarmonyMethod(typeof(GreetingFollow), nameof(GreetingFollow.EnterPrefix)));
+        harmony.Patch(AccessTools.Method(typeof(FsmState), nameof(FsmState.OnEnter)),
+            prefix: new HarmonyMethod(typeof(FightFollow), nameof(FightFollow.EnterPrefix)));
+        foreach (var onEnter in FightFollow.Watched()) {
+            harmony.Patch(onEnter, prefix: new HarmonyMethod(typeof(FightFollow), nameof(FightFollow.ActionPrefix)));
+        }
+        harmony.Patch(AccessTools.Method(typeof(ObjectPool), nameof(ObjectPool.Spawn),
+                [typeof(UnityEngine.GameObject), typeof(UnityEngine.Transform), typeof(UnityEngine.Vector3), typeof(UnityEngine.Quaternion), typeof(bool)]),
+            postfix: new HarmonyMethod(typeof(FightFollow), nameof(FightFollow.SpawnPostfix)));
+        harmony.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.AudioPlayRandomVoiceFromTableV2), "OnEnter"),
+            prefix: new HarmonyMethod(typeof(FightFollow), nameof(FightFollow.VoicePrefix)),
+            postfix: new HarmonyMethod(typeof(FightFollow), nameof(FightFollow.VoicePostfix)));
+        harmony.Patch(AccessTools.Method(typeof(NPCSpeakingAudio), "PlayVoice",
+                [typeof(RandomAudioClipTable), typeof(UnityEngine.Vector3), typeof(UnityEngine.AudioSource), typeof(NPCSpeakingAudio)]),
+            prefix: new HarmonyMethod(typeof(GreetingFollow), nameof(GreetingFollow.VoicePrefix)));
         DialogueHooks.Apply(harmony);
         DialogueOverlay.Make();
         // SSMP's two copy dispatchers: a mark's record has the last 10 s of copied actions
@@ -94,5 +110,8 @@ public class BossRulePlugin : BaseUnityPlugin {
         _client?.Tick();
         if (_client?.Connected == true) CaravanRespawn.Tick();
         Marks.Tick(_client?.Connected == true);
+        QuestRewards.Tick();
+        GreetingFollow.Tick();
+        FightFollow.Tick();
     }
 }

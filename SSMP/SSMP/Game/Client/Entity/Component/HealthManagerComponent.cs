@@ -482,7 +482,8 @@ internal class HealthManagerComponent : EntityComponent {
     public override void Update(EntityNetworkData data, bool alreadyInSceneUpdate) {
         Logger.Info("Received health manager update");
 
-        if (!IsControlled && data.Type != EntityComponentType.Health) {
+        // (0.3.22) a player's block comes from the hitter's game, which may be a copy's (BlockedHits.SendsPlayer)
+        if (!IsControlled && data.Type != EntityComponentType.Health && data.Type != EntityComponentType.BlockedHit) {
             Logger.Info("  Entity was not controlled");
             return;
         }
@@ -585,12 +586,13 @@ internal class HealthManagerComponent : EntityComponent {
     private static readonly FieldInfo? AudioPlayerPrefab = typeof(HealthManager).GetField("audioPlayerPrefab", HookBindingFlags);
 
     /// <summary>
-    /// (coop) The copy shows the scene host's block of a world object's hit as the game shows its own
-    /// (HealthManager.Invincible): its block flash where the scene host's went, turned the same, and its invincible
+    /// (coop) This game's enemy (the copy, or the scene host's own for a player's sent block: 0.3.22) shows another
+    /// game's block as the game shows its own
+    /// (HealthManager.Invincible): its block flash where the sender's went, turned the same, and its invincible
     /// sound; then its tinkTimer is set, as the game sets it (BlockedHits). Not the game's camera shake.
     /// </summary>
     private void PlayBlock(float x, float y, float angle) {
-        var copy = _healthManager.Client;
+        var copy = IsControlled ? _healthManager.Client : _healthManager.Host;
         if (copy == null || copy.isDead || !copy.gameObject.activeInHierarchy) return;
         if (BlockHitPrefab?.GetValue(copy) is GameObject prefab && prefab != null) {
             var flash = prefab.Spawn();
@@ -788,7 +790,8 @@ internal class HealthManagerComponent : EntityComponent {
     }
 
     /// <summary>
-    /// (coop) The scene host's enemy showed its block of a world object's hit (BlockedHits): its copies show theirs where
+    /// (coop) This game's enemy showed its block of a world object's hit (the scene host's) or its own hero's (0.3.22)
+    /// (BlockedHits): the other games show theirs where
     /// its flash went (HealthManager.Invincible's place, by the hit's way and the enemy's box).
     /// </summary>
     internal static void SendBlockedHit(HealthManager manager, HitInstance hit) {

@@ -134,6 +134,19 @@ internal class ModServerManager : ServerManager {
             ItemSharingLocked = true;
             Logging.Logger.Info($"Item sharing is {(InternalServerSettings.ItemSharing ? "on" : "off")} for this save");
 
+            // (coop, 0.3.22) deliveries with no carrier on record, or whose carrier was away at the last save, start
+            // over, before the loaded save is shared
+            lock (DeliveryResetLines) {
+                DeliveryResetLines.Clear();
+                try {
+                    DeliveryResetLines.AddRange(DeliveryCarrier.ResetLoaded(
+                        modSaveFile != null, modSaveFile?.Carriers == true, modSaveFile?.Uncarried ?? []
+                    ));
+                } catch (Exception e) {
+                    Logging.Logger.Error($"Could not reset the deliveries left uncarried: {e}");
+                }
+            }
+
             // Get the global save data from the save manager, which obtains the global save data from the loaded
             // save file that the user selected
             ServerSaveData.GlobalSaveData = SaveManager.GetCurrentSaveData(true, InternalServerSettings.ItemSharing);
@@ -163,6 +176,7 @@ internal class ModServerManager : ServerManager {
             ServerSaveData.PlayerSaveData[_modSettings.AuthKey!] =
                 SaveManager.GetCurrentSaveData(false, InternalServerSettings.ItemSharing);
             ServerSaveData.HostAuthKey = _modSettings.AuthKey;
+            ServerSaveData.SeparateCarried(modSaveFile?.Uncarried);
 
             if (modSaveFile?.ItemSharing == null) {
                 // Fix the item sharing value for this save right away
@@ -286,8 +300,12 @@ internal class ModServerManager : ServerManager {
     private void WriteModSave(int saveSlot) {
         // Create a copy of ServerSaveData for serialization; network updates write it on another thread
         ModSaveFile modSaveFile;
+        var inGame = new HashSet<string>(Players.Select(player => player.AuthKey));
         lock (ServerSaveData) {
             modSaveFile = ModSaveFile.FromServerSaveData(ServerSaveData);
+            // (coop, 0.3.22) carriers are kept; the items of players not in the game reset at the next start
+            modSaveFile.Carriers = true;
+            modSaveFile.Uncarried = ServerSaveData.Uncarried(inGame.Contains);
         }
 
         modSaveFile.ItemSharing = InternalServerSettings.ItemSharing;

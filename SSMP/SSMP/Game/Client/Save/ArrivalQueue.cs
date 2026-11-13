@@ -24,6 +24,22 @@ internal sealed class ArrivalQueue {
     }
 
     /// <summary>
+    /// Queue a value for a refresh only if it changes this game's own value (0.3.22): the join's snapshot brings
+    /// every value, and an unchanged silkMax's refresh (SPOOL MAX UP) mended the friend's broken silk spool.
+    /// </summary>
+    public void Add(string name, object? own, object? arrived) {
+        if (!SameAsOwn(own, arrived)) {
+            Add(name);
+        }
+    }
+
+    /// <summary>
+    /// Whether an arrived value equals this game's own. Its own method so a check's twin can skip it (every arrival
+    /// refreshed again, as before 0.3.22).
+    /// </summary>
+    public static bool SameAsOwn(object? own, object? arrived) => Equals(own, arrived);
+
+    /// <summary>
     /// The waiting names, in arrival order, if the hero is in control; they then leave the queue.
     /// </summary>
     public IReadOnlyList<string> Drain(bool heroInControl) {

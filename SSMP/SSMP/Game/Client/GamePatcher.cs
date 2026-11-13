@@ -1004,7 +1004,9 @@ internal partial class GamePatcher {
         // host's game sends the block it shows (BlockedHits: Bone_09's Dock Flyer blocking a DF Lava Rock)
         var world = BlockedHits.World(local, remote, hitInstance.IsHeroDamage);
         var tink = self.tinkTimer;
-        var leavesOut = BlockedHits.LeavesOut(HealthManagerComponent.FollowsHost(self), world);
+        // (0.3.22) and another player's hit: its block is the hitter's game's, sent (BlockedHits.SendsPlayer)
+        var leavesOut = BlockedHits.LeavesOut(HealthManagerComponent.FollowsHost(self), world) ||
+                        BlockedHits.LeavesOutPlayer(remote);
         if (leavesOut) self.tinkTimer = 1f;
         if (HealthManagerComponent.LogsHealth) {
             Logger.Debug($"(coop) hit: {self.name} from {PathOf(hitInstance.Source)}, first {hitInstance.IsFirstHit}, " +
@@ -1027,7 +1029,8 @@ internal partial class GamePatcher {
                 if (blocked && HealthManagerComponent.LogsHealth) {
                     Logger.Debug($"(coop) block left out: {self.name}, frame {Time.frameCount}");
                 }
-            } else if (BlockedHits.Sends(HealthManagerComponent.HostsHits(self), world, blocked, tink, self.tinkTimer)) {
+            } else if (BlockedHits.Sends(HealthManagerComponent.HostsHits(self), world, blocked, tink, self.tinkTimer) ||
+                       BlockedHits.SendsPlayer(local, blocked, tink, self.tinkTimer)) {
                 HealthManagerComponent.SendBlockedHit(self, hitInstance);
             }
         }
@@ -1265,7 +1268,8 @@ internal partial class GamePatcher {
     private static readonly FieldInfo? DustRunning =
         typeof(DustyPlatform).GetField("isRunning", BindingFlags.Instance | BindingFlags.NonPublic);
 
-    /// <summary>A dirt fall of a dusty platform for this game's hero: its body ran (isRunning set) for her collider.</summary>
+    /// <summary>A dirt fall of a dusty platform for this game's hero or (0.3.22) a live enemy of this game's: its body
+    /// ran (isRunning set) for that collider (DustSpots.Sends).</summary>
     private static void DustyPlatformOnCollisionEnter2D(
         Action<DustyPlatform, Collision2D> orig,
         DustyPlatform self,
@@ -1273,8 +1277,10 @@ internal partial class GamePatcher {
     ) {
         var before = DustRunning?.GetValue(self) is true;
         orig(self, other);
+        if (before || DustRunning?.GetValue(self) is not true || other == null) return;
         var hero = HeroController.SilentInstance;
-        if (hero != null && other.gameObject == hero.gameObject && !before && DustRunning?.GetValue(self) is true) {
+        var enemy = other.gameObject.GetComponentInParent<HealthManager>();
+        if (DustSpots.Sends(hero != null && other.gameObject == hero.gameObject, enemy != null && !enemy.GetIsDead())) {
             RemoteTouches.HeroLandedOnDust(self.transform.position);
         }
     }

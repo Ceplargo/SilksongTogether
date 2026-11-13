@@ -8039,7 +8039,7 @@
       "Sync": true,
       "SyncType": "Player",
       "IgnoreSceneHost": true,
-      "VarType": "System.Int32",
+      "VarType": "System.UInt64",
       "Additive": false,
       "Kind": "Shared"
     },
@@ -8047,7 +8047,7 @@
       "Sync": true,
       "SyncType": "Player",
       "IgnoreSceneHost": true,
-      "VarType": "System.Int32",
+      "VarType": "System.UInt64",
       "Additive": false,
       "Kind": "Shared"
     },
@@ -8055,7 +8055,7 @@
       "Sync": true,
       "SyncType": "Player",
       "IgnoreSceneHost": true,
-      "VarType": "System.Int32",
+      "VarType": "System.UInt64",
       "Additive": false,
       "Kind": "Shared"
     },
@@ -8063,7 +8063,7 @@
       "Sync": true,
       "SyncType": "Player",
       "IgnoreSceneHost": true,
-      "VarType": "System.Int32",
+      "VarType": "System.UInt64",
       "Additive": false,
       "Kind": "Shared"
     },
@@ -8071,7 +8071,7 @@
       "Sync": true,
       "SyncType": "Player",
       "IgnoreSceneHost": true,
-      "VarType": "System.Int32",
+      "VarType": "System.UInt64",
       "Additive": false,
       "Kind": "Shared"
     },
@@ -8079,7 +8079,7 @@
       "Sync": true,
       "SyncType": "Player",
       "IgnoreSceneHost": true,
-      "VarType": "System.Int32",
+      "VarType": "System.UInt64",
       "Additive": false,
       "Kind": "Shared"
     },
@@ -18929,6 +18929,19 @@
       "Key": {
         "id": "Song_lever_side",
         "sceneName": "Bone_East_10_Church"
+      },
+      "Value": {
+        "Sync": true,
+        "SyncType": "Server",
+        "IgnoreSceneHost": true,
+        "VarType": "System.Boolean",
+        "Additive": false
+      }
+    },
+    {
+      "Key": {
+        "id": "Bone_East_10_Church",
+        "sceneName": "Song_lever_side"
       },
       "Value": {
         "Sync": true,

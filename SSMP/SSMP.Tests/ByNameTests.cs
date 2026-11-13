@@ -50,4 +50,29 @@ public class ByNameTests {
         Assert.Equal(1, scans);
         Assert.NotNull(names.Find("P1_sing"));
     }
+
+    // (0.3.22 memory) a room change forgets the last room's clips, so the cache holds none past its room
+    [Fact]
+    public void Clear_forgets_found_things() {
+        var loaded = new List<Clip> { new() { Name = "P1_sing" } };
+        var names = new ByName<Clip>(() => loaded, c => c.Name, c => c.Alive);
+        Assert.NotNull(names.Find("P1_sing"));
+        loaded.Clear();
+        names.Clear();
+        Assert.Null(names.Find("P1_sing"));
+    }
+
+    // a name missing in the last room is looked up again in the next, where its clip may be loaded
+    [Fact]
+    public void Clear_forgets_missed_names() {
+        var scans = 0;
+        var loaded = new List<Clip>();
+        var names = new ByName<Clip>(() => { scans++; return loaded; }, c => c.Name, c => c.Alive);
+        Assert.Null(names.Find("P2_idle_loop_01"));
+        var idle = new Clip { Name = "P2_idle_loop_01" };
+        loaded.Add(idle);
+        names.Clear();
+        Assert.Same(idle, names.Find("P2_idle_loop_01"));
+        Assert.Equal(2, scans);
+    }
 }

@@ -43,6 +43,23 @@ internal static class DialogueHooks {
             postfix: new HarmonyMethod(me, nameof(EndQuestPostfix)));
         harmony.Patch(AccessTools.Method(typeof(CollectableItem), nameof(CollectableItem.Collect)),
             prefix: new HarmonyMethod(me, nameof(CollectPrefix)), postfix: new HarmonyMethod(me, nameof(CollectPostfix)));
+        harmony.Patch(AccessTools.Method(typeof(FullQuestBase), nameof(FullQuestBase.GetDescription)),
+            postfix: new HarmonyMethod(me, nameof(DescriptionPostfix)));
+    }
+
+    /// <summary>SSMP's DeliveryCarrier.Carrier(questName): who carries a delivery, or null (not a delivery, or no one).</summary>
+    private static readonly System.Reflection.MethodInfo? CarrierOf = typeof(SSMP.Api.Client.ClientAddon).Assembly
+        .GetType("SSMP.Game.Client.Save.DeliveryCarrier")?.GetMethod("Carrier",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+
+    /// <summary>
+    /// (0.3.22, rule A4) A delivery's quest book entry in a game that does not carry it names the player who does.
+    /// </summary>
+    private static void DescriptionPostfix(FullQuestBase __instance, BasicQuestBase.ReadSource readSource, ref string __result) {
+        if (readSource != BasicQuestBase.ReadSource.Inventory || CarrierOf == null) return;
+        if (CarrierOf.Invoke(null, [__instance.name]) is string carrier && carrier != Username?.Invoke()) {
+            __result = DialogueShare.CarriedBy(__result, carrier);
+        }
     }
 
     private static void CollectPrefix(CollectableItem __instance, out int __state) => __state = __instance.CollectedAmount;
@@ -126,14 +143,18 @@ internal static class DialogueHooks {
     }
 
     private static void EndQuestPostfix(FullQuestBase __instance, bool __result) {
-        if (__result) Quest(__instance, true);
+        if (!__result) return;
+        QuestRewards.HandedIn(__instance.name);
+        Quest(__instance, true);
     }
 
     private static void Quest(FullQuestBase quest, bool done) {
         if (Send == null) return;
         Debug.Log($"[BossRule] Quest sent: {quest.name} {(done ? "finished" : "taken")}");
         DialogueOverlay.Sent($"{Username?.Invoke()}|quest|{quest.name}|{(done ? "finished" : "taken")}");
-        Share(DialogueShare.Encode(new QuestNote(Username?.Invoke() ?? "", quest.name, done)));
+        var at = HeroController.SilentInstance != null ? HeroController.SilentInstance.transform.position : Vector3.zero;
+        var scene = GameManager.SilentInstance != null ? GameManager.SilentInstance.sceneName : "";
+        Share(DialogueShare.Encode(new QuestNote(Username?.Invoke() ?? "", quest.name, done, scene, at.x, at.y)));
     }
 
     /// <summary>

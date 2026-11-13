@@ -83,6 +83,17 @@ internal class BossRuleServerAddon : ServerAddon {
             if (others.Length > 0) _sender.SendSingleData(BossPacketId.TollCoins, packet, others);
         });
 
+        // (0.3.22) Shakra's greeting goes to every other player: a game whose own greeting does not run plays it
+        receiver.RegisterPacketHandler<GreetingState>(BossPacketId.Greeting, (id, packet) => {
+            var others = serverApi.ServerManager.Players.Where(p => p.Id != id).Select(p => p.Id).ToArray();
+            if (others.Length > 0) _sender.SendCollectionData(BossPacketId.Greeting, packet, others);
+        });
+        // (0.3.22) Shakra's fight in the scene host's game goes to every other player: a following game shows it
+        receiver.RegisterPacketHandler<FightFrame>(BossPacketId.Fight, (id, packet) => {
+            var others = serverApi.ServerManager.Players.Where(p => p.Id != id).Select(p => p.Id).ToArray();
+            if (others.Length > 0) _sender.SendCollectionData(BossPacketId.Fight, packet, others);
+        });
+
         // A player who leaves the room or the game stops fighting. SSMP does not report every room change as a leave,
         // so entering another room counts too
         serverApi.ServerManager.PlayerLeaveSceneEvent += player => Left(player.Id);

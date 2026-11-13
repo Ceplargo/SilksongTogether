@@ -33,6 +33,9 @@
         <Compile Include="..\BossRule\BenchBellRule.cs" Link="BenchBellRule.cs"/>
         <Compile Include="..\BossRule\PerformWakes.cs" Link="PerformWakes.cs"/>
         <Compile Include="..\BossRule\DialogueShare.cs" Link="DialogueShare.cs"/>
+        <Compile Include="..\BossRule\QuestRewards.cs" Link="QuestRewards.cs"/>
+        <Compile Include="..\BossRule\GreetingRule.cs" Link="GreetingRule.cs"/>
+        <Compile Include="..\BossRule\FightRule.cs" Link="FightRule.cs"/>
     </ItemGroup>
 
     <ItemGroup>

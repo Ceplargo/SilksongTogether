@@ -513,6 +513,7 @@ internal class ClientManager : IClientManager {
 
         // Store username, so we know what to send the server if we are connected
         _username = username;
+        Save.DeliveryCarrier.LocalName = username; // (coop, 0.3.22) who carries a delivery, by name
 
         // Create the appropriate transport
         // Create the appropriate transport

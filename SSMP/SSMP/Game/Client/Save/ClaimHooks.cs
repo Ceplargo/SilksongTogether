@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using HutongGames.PlayMaker.Actions;
 using MonoMod.RuntimeDetour;
@@ -120,6 +121,33 @@ internal static class ClaimHooks {
         }
 
         _open = (open.Marker, open.Own, open.Room, open.Opened, busyUntil);
+    }
+
+    /// <summary>
+    /// (coop, 0.3.22) The marker of the action open in this game, or null. Read by BossRule's QuestRewards (by
+    /// reflection): a reward paid while this game's own hand-in of the same quest is open would carry its marker, and a
+    /// refused hand-in's put-back would take it again.
+    /// </summary>
+    public static string? OpenMarker() => _open?.Marker;
+
+    /// <summary>(coop, 0.3.22) When the server last put back a change of each action as another player's.</summary>
+    private static readonly Dictionary<string, double> PutBacks = new();
+
+    /// <summary>The server put back a change of this action: it is another player's.</summary>
+    public static void PutBack(string marker) {
+        lock (PutBacks) {
+            PutBacks[marker] = Time.unscaledTimeAsDouble;
+        }
+    }
+
+    /// <summary>
+    /// When the server last put back a change of this action (Time.unscaledTimeAsDouble), or -1. Read by BossRule's
+    /// QuestRewards (by reflection): a game whose hand-in was put back pays the first player's reward instead.
+    /// </summary>
+    public static double PutBackAt(string marker) {
+        lock (PutBacks) {
+            return PutBacks.TryGetValue(marker, out var at) ? at : -1;
+        }
     }
 
     /// <param name="marker">The action's marker.</param>

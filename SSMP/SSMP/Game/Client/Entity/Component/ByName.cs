@@ -30,9 +30,17 @@ internal sealed class ByName<T> where T : class {
         }
 
         if (_found.TryGetValue(name, out thing)) return thing;
-        // shortcut: a name missing once is never scanned for again, as a scan reads every loaded thing; clear it on a
-        // scene change if a copy's loop is ever found missing a clip its room loads later
+        // a name missing once is not scanned for again until Clear, as a scan reads every loaded thing
         _missed.Add(name);
         return null;
+    }
+
+    /// <summary>
+    /// (0.3.22) Forgets every thing found and every name missed, with no scan: called on each scene change, so no
+    /// loaded asset is held past its room (a held AudioClip can't be unloaded) and a name is looked up again in the next.
+    /// </summary>
+    public void Clear() {
+        _found.Clear();
+        _missed.Clear();
     }
 }

@@ -29,6 +29,7 @@
         <Compile Include="..\SSMP\Game\Client\Entity\Action\InStateStops.cs" Link="Linked\InStateStops.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\StageBreaks.cs" Link="Linked\StageBreaks.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\ArenaWinHold.cs" Link="Linked\ArenaWinHold.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\DeliveryCarrier.cs" Link="Linked\DeliveryCarrier.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\DroppedChange.cs" Link="Linked\DroppedChange.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\Complex\MergeRule.cs" Link="Linked\MergeRule.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\Complex\EntryChange.cs" Link="Linked\EntryChange.cs"/>

@@ -14,7 +14,7 @@ public class BlockedHitsTests {
     [Fact]
     public void A_copys_block_is_not_sent() => Assert.False(BlockedHits.Sends(false, true, true, 0f, 0.1f));
 
-    // a player's hit is no world hit: the copied swings show its block in each game, as before
+    // a player's hit is no world hit (its block is the hitter's game's: SendsPlayer)
     [Fact]
     public void A_players_hit_is_no_world_hit() {
         Assert.False(BlockedHits.World(true, false, false));
@@ -37,6 +37,30 @@ public class BlockedHitsTests {
         Assert.True(BlockedHits.LeavesOut(true, true));
         Assert.False(BlockedHits.LeavesOut(true, false));
         Assert.False(BlockedHits.LeavesOut(false, true));
+    }
+
+    // Bone_06's Rock Roller starting to roll: the hitter's copy blocked its swing and the scene host's roller did not, so
+    // it clinked on the hitter's screen only. The hitter's game sends the block of its own hit it shows, whichever game
+    // runs the enemy
+    [Fact]
+    public void A_players_shown_block_of_their_own_hit_is_sent() =>
+        Assert.True(BlockedHits.SendsPlayer(true, true, 0f, 0.1f));
+
+    [Fact]
+    public void Another_players_hit_is_not_sent_by_this_game() =>
+        Assert.False(BlockedHits.SendsPlayer(false, true, 0f, 0.1f));
+
+    [Fact]
+    public void A_players_hit_not_blocked_or_not_shown_is_not_sent() {
+        Assert.False(BlockedHits.SendsPlayer(true, false, 0f, 0f));
+        Assert.False(BlockedHits.SendsPlayer(true, true, 0.05f, 0.03f));
+    }
+
+    // a game shows no block of its own for another player's hit (the hitter's entry shows it), so the two don't double
+    [Fact]
+    public void A_game_leaves_out_its_own_block_of_another_players_hit_only() {
+        Assert.True(BlockedHits.LeavesOutPlayer(true));
+        Assert.False(BlockedHits.LeavesOutPlayer(false));
     }
 
     // HealthManager.Invincible's flash: on the side of its box the hit came from, at the source's height (from below or

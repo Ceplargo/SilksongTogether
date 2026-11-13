@@ -244,6 +244,8 @@ internal class SaveManager {
         // (coop) First, so a one-of-a-kind action's marker is closed before the frame's changes are compared
         ClaimHooks.Register();
         FleaCampSeats.Register();
+        // (coop, 0.3.22) after ClaimHooks, so its hand-in hook is the outer one: a refused hand-in opens no marker
+        DeliveryCarrier.Register();
         try {
             _saveGameHook ??= new Hook(
                 typeof(global::GameManager).GetMethod(
@@ -280,6 +282,7 @@ internal class SaveManager {
         MonoBehaviourUtil.Instance.OnUpdateEvent -= ClaimHooks.OnUpdate;
         ClaimHooks.Deregister();
         FleaCampSeats.Deregister();
+        DeliveryCarrier.Deregister();
         _saveGameHook?.Dispose();
         _saveGameHook = null;
         _resetSemiHook?.Dispose();
@@ -1382,6 +1385,7 @@ internal class SaveManager {
         // applied to this player's own values too (its money back), which the hosting player's game otherwise keeps
         if (saveUpdate.Claim.Length > 0) {
             Logger.Info($"The server put back save index {index}: {saveUpdate.Claim} is another player's");
+            ClaimHooks.PutBack(saveUpdate.Claim);
         }
 
         _putBack = saveUpdate.Claim.Length > 0;
@@ -1408,9 +1412,13 @@ internal class SaveManager {
         // the main menu are still listed, and setting one threw and stopped the join before it entered the game
         DropDestroyedPersistents();
 
-        foreach (var (index, value) in currentSave.SaveData) {
-            UpdateSaveWithData(index, value);
-        }
+        // (0.3.22) One value that can't be applied is skipped, not the whole join (SaveSyncRules.ApplyEach)
+        // and logged as an error: CoopQA's error log keeps only Error and Fatal, so a Warn would pass every check unseen
+        SaveSyncRules.ApplyEach(
+            currentSave.SaveData,
+            UpdateSaveWithData,
+            (index, e) => Logger.Error($"Could not apply save data with index {index}, skipping:\n{e}")
+        );
     }
 
     /// <summary>
@@ -1437,6 +1445,8 @@ internal class SaveManager {
             }
 
             var decodedObject = DecodeSaveDataValue(name, encodedValue);
+            // (coop, 0.3.22) the value before the arrival: an unchanged one is not refreshed (SaveChanges.Refreshes)
+            var own = SaveChanges.Refreshed(name) ? typeof(PlayerData).GetField(name)?.GetValue(pd) : null;
 
             switch (decodedObject) {
                 case bool decodedBool:
@@ -1562,7 +1572,7 @@ internal class SaveManager {
                 }
             }
 
-            _saveChanges.ApplyPlayerDataSaveChange(name);
+            _saveChanges.ApplyPlayerDataSaveChange(name, own, decodedObject);
         }
 
         if (SaveDataMapping.GeoRockIndices.TryGetValue(index, out var itemData)) {

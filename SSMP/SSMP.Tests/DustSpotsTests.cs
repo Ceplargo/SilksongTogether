@@ -22,6 +22,15 @@ public class DustSpotsTests {
         Assert.Equal(2, DustSpots.Nearest(spots, 10.15f, 5f));
     }
 
+    // probe_plat_dust: Bone_06's Bone Circler (1) landed on two dusty platforms in the host's game, no dirt in the
+    // friend's; a corpse, geo piece or debris falls by each game's own physics
+    [Fact]
+    public void A_heros_or_a_live_enemys_landing_is_sent() {
+        Assert.True(DustSpots.Sends(true, false));
+        Assert.True(DustSpots.Sends(false, true));
+        Assert.False(DustSpots.Sends(false, false));
+    }
+
     [Fact]
     public void No_platform_near_the_sent_place_is_none() {
         Assert.Equal(-1, DustSpots.Nearest(new[] { (0f, 0f) }, 3f, 0f));

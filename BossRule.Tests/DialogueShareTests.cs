@@ -49,9 +49,33 @@ public class DialogueShareTests {
 
     [Fact]
     public void A_quest_note_round_trips_exactly() {
-        var note = new QuestNote("Bob", "Shiny Bell Goomba", true);
+        var note = new QuestNote("Bob|x", "Shiny Bell Goomba", true, "Bone_04", -12.375f, 4.1f);
         Assert.Equal(note, DialogueShare.Decode(DialogueShare.Encode(note)));
     }
+
+    private static QuestNote Quest(string scene = "Bone_04", float x = 10f, float y = 5f) =>
+        new("Ann", "Shiny Bell Goomba", false, scene, x, y);
+
+    // 0.3.22 quest rules Task 6 (rule A4): a quest note shows where a find shows
+    [Fact]
+    public void A_quest_note_shows_on_screen_in_the_watchers_room_and_view_when_not_busy() =>
+        Assert.Equal(Where.Screen, DialogueShare.Route(Quest(), "Bone_04", Near, busy: false));
+
+    [Fact]
+    public void A_quest_note_goes_to_the_chat_out_of_view_in_another_room_or_when_busy() {
+        Assert.Equal(Where.Chat, DialogueShare.Route(Quest(), "Bone_04", Far, busy: false));
+        Assert.Equal(Where.Chat, DialogueShare.Route(Quest(scene: "Bone_05"), "Bone_04", Near, busy: false));
+        Assert.Equal(Where.Chat, DialogueShare.Route(Quest(), "Bone_04", Near, busy: true));
+    }
+
+    [Fact]
+    public void A_delivery_line_names_its_carrier() =>
+        Assert.Equal("Ann carries the delivery for Bonebottom Delivery",
+            DialogueShare.CarrierLine("Ann", "Bonebottom Delivery"));
+
+    [Fact]
+    public void A_quest_book_entry_names_the_carrier_after_its_text() =>
+        Assert.Equal("Take the supplies.\n\nCarried by Ann.", DialogueShare.CarriedBy("Take the supplies.", "Ann"));
 
     [Fact]
     public void A_page_carries_keys_not_looked_up_text() {

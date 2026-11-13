@@ -19,6 +19,13 @@ internal class AudioLoopComponent : EntityComponent {
     private static readonly ByName<AudioClip> Clips = new(Resources.FindObjectsOfTypeAll<AudioClip>, clip => clip.name,
         clip => clip != null);
 
+    /// <summary>(0.3.22) Clips holds no clip past its room: each scene change forgets them (a dictionary clear, no scan;
+    /// the next unknown name scans once, as before). Holding every loaded clip kept their native audio memory for the
+    /// session.</summary>
+    static AudioLoopComponent() {
+        UnityEngine.SceneManagement.SceneManager.activeSceneChanged += (_, _) => Clips.Clear();
+    }
+
     /// <summary>The sound sources on the host object, in hierarchy order.</summary>
     private readonly AudioSource[] _hostSources;
 

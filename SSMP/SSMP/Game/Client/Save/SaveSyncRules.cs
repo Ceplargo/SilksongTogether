@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+
 namespace SSMP.Game.Client.Save;
 
 /// <summary>
@@ -17,4 +20,25 @@ internal static class SaveSyncRules {
         SaveKind.Item => itemSharing,
         _ => legacyShared
     };
+
+    /// <summary>
+    /// (0.3.22, from the original SSMP's 4d7ca26) Apply each value of the save a joining player gets. A value whose
+    /// apply throws is reported and skipped, so one bad value no longer stops the join before the game is entered.
+    /// </summary>
+    /// <param name="values">The save's values by index.</param>
+    /// <param name="apply">Applies one value.</param>
+    /// <param name="skipped">Told each value that threw, with its exception.</param>
+    public static void ApplyEach(
+        IEnumerable<KeyValuePair<ushort, byte[]>> values,
+        Action<ushort, byte[]> apply,
+        Action<ushort, Exception> skipped
+    ) {
+        foreach (var pair in values) {
+            try {
+                apply(pair.Key, pair.Value);
+            } catch (Exception e) {
+                skipped(pair.Key, e);
+            }
+        }
+    }
 }

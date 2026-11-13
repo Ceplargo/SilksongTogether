@@ -40,6 +40,20 @@ internal class ModSaveFile {
     public float? HostPlayTime { get; set; }
 
     /// <summary>
+    /// (coop, 0.3.22) Whether this was written with each delivery's item kept with its carrier (DeliveryCarrier). Null
+    /// in mod saves written before 0.3.22: a delivery under way in one has no carrier on record.
+    /// </summary>
+    [JsonProperty("carriers")]
+    public bool? Carriers { get; set; }
+
+    /// <summary>
+    /// (coop, 0.3.22) The delivery items held at this save by a player who was not in the game: their deliveries reset
+    /// at the next host start (a missed night).
+    /// </summary>
+    [JsonProperty("uncarried")]
+    public List<string>? Uncarried { get; set; }
+
+    /// <summary>
     /// Convert this class to an encoded ServerSaveData.
     /// </summary>
     /// <returns>The converted ServerSaveData instance.</returns>

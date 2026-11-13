@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace SSMP.Game.Client;
 
@@ -25,6 +26,18 @@ internal static class DustSpots {
     /// <summary>The place an effect info holds, or null for a wrong one.</summary>
     internal static (float x, float y)? Read(byte[]? info) =>
         info is { Length: 8 } ? (BitConverter.ToSingle(info, 0), BitConverter.ToSingle(info, 4)) : null;
+
+    /// <summary>
+    /// (0.3.22) Whether this game sends a dirt fall it just played: its own hero landed, or a live enemy did. An enemy
+    /// lands only in the game that runs it (another game's copy meets no platform: Bone_06's Bone Circler (1),
+    /// probe_plat_dust 2026-11-12_181024 and later, the dirt in the host's game only). A corpse, a geo piece or debris
+    /// falls by each game's own physics, so its dirt is each game's own (the project's ruling, 2026-11-12).
+    /// </summary>
+    internal static bool Sends(bool hero, bool liveEnemy) => hero || liveEnemy && SendsEnemyLandings();
+
+    /// <summary>The switch enemy_dust's twin turns off (a skipped bool method returns false): no enemy's landing goes.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool SendsEnemyLandings() => true;
 
     /// <summary>The index of the spot nearest (x, y) within Within, or -1.</summary>
     internal static int Nearest(IReadOnlyList<(float x, float y)> spots, float x, float y) {

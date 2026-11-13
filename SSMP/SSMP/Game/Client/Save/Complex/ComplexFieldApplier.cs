@@ -27,6 +27,11 @@ internal static class ComplexFieldApplier {
             return;
         }
 
+        // (coop, 0.3.22) the other players' delivery items are kept aside, never written here (DeliveryCarrier)
+        if (fieldName == "Collectables") {
+            changes = DeliveryCarrier.TakeArrivals(snapshot, changes);
+        }
+
         var before = ComplexFieldReader.Read(fieldName);
         var after = new Projection();
         foreach (var (entry, members) in before) {

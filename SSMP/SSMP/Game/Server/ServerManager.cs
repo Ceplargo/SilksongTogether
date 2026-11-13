@@ -78,6 +78,14 @@ internal abstract class ServerManager : IServerManager {
     private readonly ConcurrentDictionary<ushort, Dictionary<ushort, byte[]>> _joinSaves = new();
 
     /// <summary>
+    /// (coop, 0.3.22) The chat lines for the deliveries the host's start reset, told once to each player who joins.
+    /// </summary>
+    protected readonly List<string> DeliveryResetLines = [];
+
+    /// <summary>The auth keys of the players told <see cref="DeliveryResetLines"/>.</summary>
+    private readonly HashSet<string> _toldResets = [];
+
+    /// <summary>
     /// The numbers of the save updates applied from each player (by auth key) in this server run, kept over
     /// disconnects, so each update is applied once. Read and written under the ServerSaveData lock.
     /// </summary>
@@ -1975,6 +1983,47 @@ internal abstract class ServerManager : IServerManager {
         }
 
         Logger.Info($"Sent {changed.Count} save values that changed while player {id} joined");
+
+        SendCarriers(playerData);
+        lock (_toldResets) {
+            if (DeliveryResetLines.Count > 0 && _toldResets.Add(playerData.AuthKey)) {
+                foreach (var line in DeliveryResetLines) {
+                    SendMessage(id, line);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// (coop, 0.3.22) Who carries each delivery, at a join: the joining player gets the other players' own delivery
+    /// items, and they get the joining player's, as forwarded entries (DeliveryCarrier).
+    /// </summary>
+    private void SendCarriers(ServerPlayerData joiner) {
+        if (DeliveryCarrier.OwnEntries().Count == 0) {
+            return;
+        }
+
+        lock (ServerSaveData) {
+            if (!ServerSaveData.CarriedApart(out var index)) {
+                return;
+            }
+
+            var joinerTags = ServerSaveData.CarrierTags(joiner.AuthKey, joiner.Username);
+            var joinerUpdates = _netServer.GetUpdateManagerForClient(joiner.Id);
+            foreach (var other in _playerData.Values) {
+                if (other.Id == joiner.Id) {
+                    continue;
+                }
+
+                if (ServerSaveData.CarrierTags(other.AuthKey, other.Username) is { } tags) {
+                    joinerUpdates?.SetSaveUpdate(index, tags);
+                }
+
+                if (joinerTags != null) {
+                    _netServer.GetUpdateManagerForClient(other.Id)?.SetSaveUpdate(index, joinerTags);
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -2136,7 +2185,15 @@ internal abstract class ServerManager : IServerManager {
                         $"Refused save update {packet.SaveDataIndex} from ({id}, {username}): {packet.Claim} is another player's"
                     );
                     var store = shared ? ServerSaveData.GlobalSaveData : GetPlayerSaveData(authKey);
-                    if (store.TryGetValue(packet.SaveDataIndex, out var serverValue)) {
+                    var serverValue = store.TryGetValue(packet.SaveDataIndex, out var stored) ? stored : null;
+                    // (coop, 0.3.22) the shared Collectables go back with the player's own entries: a second hand-in's
+                    // rosary set goes back too (the first player's game pays it, BossRule's QuestRewards)
+                    if (shared && pdVarName == ServerSaveData.Collectables &&
+                        ServerSaveData.CarriedApart(out var collectables) && collectables == packet.SaveDataIndex) {
+                        serverValue = ServerSaveData.JoinedCollectables(GetPlayerSaveData(authKey));
+                    }
+
+                    if (serverValue != null) {
                         _netServer.GetUpdateManagerForClient(id)?.SetSaveUpdate(
                             packet.SaveDataIndex, serverValue, packet.Claim
                         );
@@ -2151,7 +2208,7 @@ internal abstract class ServerManager : IServerManager {
         lock (ServerSaveData) {
             if (pdVarName != null && ComplexFieldSpecs.All.TryGetValue(pdVarName, out var spec)) {
                 var store = shared ? ServerSaveData.GlobalSaveData : GetPlayerSaveData(authKey);
-                MergeComplexUpdate(id, packet, pdVarName, spec, store, shared);
+                MergeComplexUpdate(id, username, authKey, packet, pdVarName, spec, store, shared);
             } else if (!shared) {
                 Logger.Debug("  Value is per player");
 
@@ -2267,6 +2324,8 @@ internal abstract class ServerManager : IServerManager {
     /// to the other players.
     /// </summary>
     /// <param name="id">The ID of the player that sent the update.</param>
+    /// <param name="username">The name of the player that sent the update.</param>
+    /// <param name="authKey">The auth key of the player that sent the update.</param>
     /// <param name="packet">The update.</param>
     /// <param name="name">The name of the container field.</param>
     /// <param name="spec">The container's shared members.</param>
@@ -2274,12 +2333,20 @@ internal abstract class ServerManager : IServerManager {
     /// <param name="shared">Whether the container is shared.</param>
     private void MergeComplexUpdate(
         ushort id,
+        string username,
+        string authKey,
         SaveUpdate packet,
         string name,
         ComplexFieldSpec spec,
         Dictionary<ushort, byte[]> store,
         bool shared
     ) {
+        // (coop, 0.3.22) the delivery items in the shared Collectables are each carrier's own (DeliveryCarrier)
+        if (shared && name == ServerSaveData.Collectables && DeliveryCarrier.OwnEntries() is { Count: > 0 } ownNames) {
+            MergeCarriedUpdate(id, username, authKey, packet, spec, store, ownNames);
+            return;
+        }
+
         try {
             var stored = store.TryGetValue(packet.SaveDataIndex, out var value)
                 ? EncodeUtil.DecodeSaveDataValue(name, value) as byte[]
@@ -2299,6 +2366,61 @@ internal abstract class ServerManager : IServerManager {
         foreach (var otherId in _playerData.Keys) {
             if (otherId != id) {
                 _netServer.GetUpdateManagerForClient(otherId)?.SetSaveUpdate(packet.SaveDataIndex, packet.Value);
+            }
+        }
+    }
+
+    /// <summary>
+    /// (coop, 0.3.22) A shared Collectables update, split: its delivery items are merged into the sender's own store
+    /// and the sender's own items are forwarded to the other players as "item@player", which their games keep aside;
+    /// the rest is merged into the global snapshot and forwarded as before.
+    /// </summary>
+    private void MergeCarriedUpdate(
+        ushort id,
+        string username,
+        string authKey,
+        SaveUpdate packet,
+        ComplexFieldSpec spec,
+        Dictionary<ushort, byte[]> global,
+        ICollection<string> ownNames
+    ) {
+        var index = packet.SaveDataIndex;
+        byte[]? sharedUpdate = null;
+        byte[]? tags = null;
+        try {
+            var (absolute, changes) = ProjectionOps.Decode((byte[]) EncodeUtil.DecodeSaveDataValue(
+                ServerSaveData.Collectables, packet.Value)!);
+            var (sharedChanges, own) = DeliveryCarrier.Split(changes, ownNames);
+            if (sharedChanges.Count > 0) {
+                var update = ProjectionOps.Encode(absolute, sharedChanges);
+                global[index] = ServerSaveData.Encode(
+                    ProjectionOps.MergeIntoSnapshot(ServerSaveData.Stored(global, index), update, spec));
+                sharedUpdate = ServerSaveData.Encode(update);
+            }
+
+            if (own.Count > 0) {
+                var playerStore = GetPlayerSaveData(authKey);
+                playerStore[index] = ServerSaveData.Encode(ProjectionOps.MergeIntoSnapshot(
+                    ServerSaveData.Stored(playerStore, index), ProjectionOps.Encode(absolute, own), spec));
+                tags = ServerSaveData.CarrierTags(authKey, username);
+            }
+        } catch (Exception e) when (e is InvalidDataException or ArgumentOutOfRangeException) {
+            Logger.Warn($"Could not merge item container update ({ServerSaveData.Collectables}): {e.Message}");
+            return;
+        }
+
+        foreach (var otherId in _playerData.Keys) {
+            if (otherId == id) {
+                continue;
+            }
+
+            var updates = _netServer.GetUpdateManagerForClient(otherId);
+            if (sharedUpdate != null) {
+                updates?.SetSaveUpdate(index, sharedUpdate);
+            }
+
+            if (tags != null) {
+                updates?.SetSaveUpdate(index, tags);
             }
         }
     }

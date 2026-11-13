@@ -18,7 +18,9 @@ internal enum BossPacketId {
     BossReady,
     Dialogue,
     DropTaken,
-    TollCoins
+    TollCoins,
+    Greeting,
+    Fight
 }
 
 internal abstract class BossPacket : IPacketData {
@@ -44,6 +46,9 @@ internal abstract class BossPacket : IPacketData {
         BossPacketId.Dialogue => new PacketDataCollection<DialogueMessage>(),
         BossPacketId.DropTaken => new DropTaken(),
         BossPacketId.TollCoins => new TollCoins(),
+        // (0.3.22) a collection: her greeting enters several states in one frame (Do Camlock?, Shout Burst, Hero Anim)
+        BossPacketId.Greeting => new PacketDataCollection<GreetingState>(),
+        BossPacketId.Fight => new PacketDataCollection<FightFrame>(),
         _ => new Outcome()
     };
 
@@ -291,5 +296,57 @@ internal class TollCoins : BossPacket {
     public override void ReadData(IPacket packet) {
         Scene = packet.ReadString();
         State = packet.ReadString();
+    }
+}
+
+/// <summary>(0.3.22) A state Shakra's greeting entered in the walker's game (Fsm, State), or a line she spoke there
+/// (Fsm "voice", State her voice table) (GreetingFollow).</summary>
+internal class GreetingState : BossPacket {
+    public string Scene = "";
+    public string Fsm = "";
+    public string State = "";
+
+    public override void WriteData(IPacket packet) {
+        packet.Write(Scene);
+        packet.Write(Fsm);
+        packet.Write(State);
+    }
+
+    public override void ReadData(IPacket packet) {
+        Scene = packet.ReadString();
+        Fsm = packet.ReadString();
+        State = packet.ReadString();
+    }
+}
+
+/// <summary>(0.3.22) A frame of Shakra's fight in the scene host's game: the state it entered (empty for a look
+/// alone), her place, facing, whether she shows, and her clip (FightFollow).</summary>
+internal class FightFrame : BossPacket {
+    public string Scene = "";
+    public string State = "";
+    public float X;
+    public float Y;
+    public bool Right;
+    public bool Shown;
+    public string Clip = "";
+
+    public override void WriteData(IPacket packet) {
+        packet.Write(Scene);
+        packet.Write(State);
+        packet.Write(X);
+        packet.Write(Y);
+        packet.Write(Right);
+        packet.Write(Shown);
+        packet.Write(Clip);
+    }
+
+    public override void ReadData(IPacket packet) {
+        Scene = packet.ReadString();
+        State = packet.ReadString();
+        X = packet.ReadFloat();
+        Y = packet.ReadFloat();
+        Right = packet.ReadBool();
+        Shown = packet.ReadBool();
+        Clip = packet.ReadString();
     }
 }

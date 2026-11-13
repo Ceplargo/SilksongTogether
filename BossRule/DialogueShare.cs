@@ -14,8 +14,11 @@ namespace BossRule;
 internal record DialoguePage(string Talker, int Talk, int Page, string SpeakerSheet, string SpeakerKey, string TextSheet,
     string TextKey, string Scene, float NpcX, float NpcY);
 
-/// <summary>(coop) A quest taken or finished in the talker's game; QuestKey is the quest's asset name.</summary>
-internal record QuestNote(string Talker, string QuestKey, bool Done);
+/// <summary>
+/// (coop) A quest taken or finished in the talker's game; QuestKey is the quest's asset name. (0.3.22) Where the talker
+/// stood: in the watcher's room and view it shows as the game's own message, as a find does (rule A4).
+/// </summary>
+internal record QuestNote(string Talker, string QuestKey, bool Done, string Scene, float X, float Y);
 
 /// <summary>
 /// (coop, 0.3.21) An item a wish counts, found in the finder's game (CollectableItem.Collect): the finder's name, the
@@ -45,7 +48,8 @@ internal static class DialogueShare {
     public static string Encode(DialoguePage p) => string.Join(Sep.ToString(), "P", p.Talker, Num(p.Talk), Num(p.Page),
         p.SpeakerSheet, p.SpeakerKey, p.TextSheet, p.TextKey, p.Scene, Num(p.NpcX), Num(p.NpcY));
 
-    public static string Encode(QuestNote n) => string.Join(Sep.ToString(), "Q", n.Talker, n.QuestKey, n.Done ? "1" : "0");
+    public static string Encode(QuestNote n) => string.Join(Sep.ToString(), "Q", n.Talker, n.QuestKey, n.Done ? "1" : "0",
+        n.Scene, Num(n.X), Num(n.Y));
 
     public static string Encode(FoundNote n) => string.Join(Sep.ToString(), "F", n.Finder, n.ItemKey, n.QuestKey,
         Num(n.Count), Num(n.Needed), Num(n.Amount), n.Scene, Num(n.X), Num(n.Y));
@@ -53,7 +57,12 @@ internal static class DialogueShare {
     /// <summary>A <see cref="DialoguePage"/>, <see cref="QuestNote"/> or <see cref="FoundNote"/>; null for anything else.</summary>
     public static object? Decode(string text) {
         var f = text.Split(Sep);
-        if (f[0] == "Q" && f.Length == 4 && f[3] is "0" or "1") return new QuestNote(f[1], f[2], f[3] == "1");
+        if (f[0] == "Q" && f.Length == 7 && f[3] is "0" or "1") {
+            return float.TryParse(f[5], NumberStyles.Float, CultureInfo.InvariantCulture, out var qx)
+                   && float.TryParse(f[6], NumberStyles.Float, CultureInfo.InvariantCulture, out var qy)
+                ? new QuestNote(f[1], f[2], f[3] == "1", f[4], qx, qy)
+                : null;
+        }
         if (f[0] == "F" && f.Length == 10) {
             return int.TryParse(f[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out var count)
                    && int.TryParse(f[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out var needed)
@@ -91,6 +100,16 @@ internal static class DialogueShare {
         $"{finder} found {Plain(item)} ({Plain(quest)} {count}/{needed})";
 
     public static string QuestLine(string talker, string quest, bool done) => $"{talker} {(done ? "finished" : "took")} {quest}";
+
+    /// <summary>On the watcher's screen only when nothing keeps them busy and the talker is in their room and view.</summary>
+    public static Where Route(QuestNote note, string myScene, View myView, bool busy) =>
+        !busy && note.Scene == myScene && myView.Contains(note.X, note.Y) ? Where.Screen : Where.Chat;
+
+    /// <summary>A delivery's accept on the other players' screens: who carries it (rule A1: the player who took it).</summary>
+    public static string CarrierLine(string carrier, string quest) => $"{carrier} carries the delivery for {quest}";
+
+    /// <summary>A delivery's quest book entry in another player's game: its text, then who carries it.</summary>
+    public static string CarriedBy(string description, string carrier) => $"{description}\n\nCarried by {carrier}.";
 
     /// <summary>The text with its rich-text tags out and its lines joined.</summary>
     public static string Plain(string words) =>
