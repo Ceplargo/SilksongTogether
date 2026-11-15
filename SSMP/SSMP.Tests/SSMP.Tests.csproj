@@ -17,9 +17,15 @@
         <Compile Include="..\SSMP\Game\Client\Save\PersistentApply.cs" Link="Linked\PersistentApply.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\GeoRockHold.cs" Link="Linked\GeoRockHold.cs"/>
         <Compile Include="..\SSMP\Game\Client\ThunkSpark.cs" Link="Linked\ThunkSpark.cs"/>
+        <Compile Include="..\SSMP\Game\Client\MapIconRule.cs" Link="Linked\MapIconRule.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\ScentPiles.cs" Link="Linked\ScentPiles.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\TemplateRehook.cs" Link="Linked\TemplateRehook.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\LateSilk.cs" Link="Linked\LateSilk.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\LateSpawns.cs" Link="Linked\LateSpawns.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\PreMadeIds.cs" Link="Linked\PreMadeIds.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\RandomChildPicks.cs" Link="Linked\RandomChildPicks.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\TakeoverBodies.cs" Link="Linked\TakeoverBodies.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\TakeoverStates.cs" Link="Linked\TakeoverStates.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\LateEffects.cs" Link="Linked\LateEffects.cs"/>
         <Compile Include="..\SSMP\Game\Client\HeartGetUp.cs" Link="Linked\HeartGetUp.cs"/>
         <Compile Include="..\SSMP\Game\Client\HitNotes.cs" Link="Linked\HitNotes.cs"/>
@@ -38,6 +44,7 @@
         <Compile Include="..\SSMP\Game\Client\Save\Complex\ProjectionOps.cs" Link="Linked\ProjectionOps.cs"/>
         <Compile Include="..\SSMP\Game\Server\UsernameRules.cs" Link="Linked\UsernameRules.cs"/>
         <Compile Include="..\SSMP\Game\Client\PersonalCocoon.cs" Link="Linked\PersonalCocoon.cs"/>
+        <Compile Include="..\SSMP\Game\Client\GrubCocoonHits.cs" Link="Linked\GrubCocoonHits.cs"/>
         <Compile Include="..\SSMP\Ui\Component\LobbyVisibility.cs" Link="Linked\LobbyVisibility.cs"/>
         <Compile Include="..\SSMP\Networking\Matchmaking\Protocol\MmsModels.cs" Link="Linked\MmsModels.cs"/>
         <Compile Include="..\SSMP\Game\Server\BugMark.cs" Link="Linked\BugMark.cs"/>
@@ -97,6 +104,8 @@
         <Compile Include="..\SSMP\Game\Client\Entity\Action\PlainSpawns.cs" Link="Linked\PlainSpawns.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\HitKind.cs" Link="Linked\HitKind.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\BlockedHits.cs" Link="Linked\BlockedHits.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\WorldDamage.cs" Link="Linked\WorldDamage.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Entity\Component\CorpseFuses.cs" Link="Linked\CorpseFuses.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\ChildPlaces.cs" Link="Linked\ChildPlaces.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\FlungThrows.cs" Link="Linked\FlungThrows.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Component\FireballFollow.cs" Link="Linked\FireballFollow.cs"/>

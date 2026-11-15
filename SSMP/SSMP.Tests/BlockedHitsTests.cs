@@ -74,4 +74,15 @@ public class BlockedHitsTests {
         Assert.Equal((10.5f, 2.5f, 0f), BlockedHits.Flash(0, 10f, 2f, true, 1.5f, 0f, 2f, 4f, 5f, 2.5f));
         Assert.Equal((10f, 2f, 0f), BlockedHits.Flash(1, 10f, 2f, false, 0f, 0f, 0f, 0f, 3f, 3f));
     }
+
+    // (0.3.23) a landed hit replayed while this game's enemy blocks (Bone_16's Bone Crawler in its Spike) plays its hit
+    // effects, not the block the game would make of it
+    [Fact]
+    public void A_landed_hit_replayed_while_the_enemy_blocks_plays_its_effects_only() =>
+        Assert.True(BlockedHits.ReplaysEffectsOnly(true));
+
+    // one the enemy does not block plays as the game's own hit, as before
+    [Fact]
+    public void A_landed_hit_replayed_while_the_enemy_takes_hits_plays_as_the_games_hit() =>
+        Assert.False(BlockedHits.ReplaysEffectsOnly(false));
 }

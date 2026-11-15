@@ -5,6 +5,16 @@ namespace SSMP.Tests;
 
 public class MissedHitsTests {
     [Fact]
+    public void With_no_hit_waiting_it_hands_back_one_shared_empty_list() {
+        // (optimization) every entity asks every frame: a new list, two closures and LINQ iterators each time were the
+        // largest allocation in a co-op walk (1.3 GB in 30 minutes, the host's game, mini PC job 25)
+        var hits = new MissedHits();
+        var first = hits.DueHits(1.0);
+        Assert.Empty(first);
+        Assert.Same(first, hits.DueHits(2.0, atOnce: true));
+    }
+
+    [Fact]
     public void A_landed_hit_its_copied_swing_showed_is_not_due() {
         var hits = new MissedHits();
         hits.Landed(10.0);

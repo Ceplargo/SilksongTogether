@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using HutongGames.PlayMaker;
 using HutongGames.PlayMaker.Actions;
 using SSMP.Networking.Packet.Data;
@@ -33,11 +34,20 @@ internal static partial class EntityFsmActions {
     /// now follows the host's outcome too).
     /// </summary>
     private static void ApplyNetworkDataFromAction(EntityNetworkData data, SetSpecialDeath action) {
-        var value = data.Packet.ReadBool();
+        // (coop, 0.3.23) no data: EntityInitializer replays an init state (a takeover's original, a copy's start-up), so
+        // the action's own value, as the room's runner's Init set it. The replay threw here and the original kept the
+        // scene's value: Ant_05b's Wave 5 Bone Hunter Child sets its special death off in Init, and after a takeover its
+        // kill only sent ZERO HP, its Death state waited for a normal death and the arena stayed shut (takeover_arena)
+        if (data == null && (!ReplaysInitSpecialDeath() || action.hasSpecialDeath.IsNone)) return;
+        var value = data == null ? action.hasSpecialDeath.Value : data.Packet.ReadBool();
         if (action.Fsm?.GetOwnerDefaultTarget(action.target) is { } target && target.GetComponent<HealthManager>() is { } health) {
             health.hasSpecialDeath = value;
         }
     }
+
+    /// <summary>(coop) Not inlined: takeover_arena's twin skips it, which gives false (the init replay sets nothing).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool ReplaysInitSpecialDeath() => true;
 
     #endregion
 

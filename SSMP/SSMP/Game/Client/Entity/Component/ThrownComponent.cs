@@ -1048,6 +1048,7 @@ internal class ThrownComponent : EntityComponent {
     /// <summary>(coop, 0.3.21) A copy that ends gives its Animators their own modes back (the pool's next use of
     /// them may be this game's own).</summary>
     private static void GiveBack(Copy copy) {
+        CorpseFuse.Release(copy.GameObject, hostsWent: false); // (coop, 0.3.23) a held corpse keeps its own fuse again
         foreach (var animator in copy.Animating) {
             if (Culling.Release(animator, out var mode) && animator != null) animator.cullingMode = mode;
         }
@@ -1868,7 +1869,10 @@ internal class ThrownComponent : EntityComponent {
 
             if (copy != null && _targets.TryGetValue(number, out var last)) LetsPickupGo(copy, last);
             _targets.Remove(number);
-            if (_copies.TryGetValue(number, out var ending)) GiveBack(ending);
+            if (_copies.TryGetValue(number, out var ending)) {
+                CorpseFuse.Release(ending.GameObject, hostsWent: true); // (coop, 0.3.23) the host's corpse went off
+                GiveBack(ending);
+            }
             _copies.Remove(number);
             _flungCopied.Remove(number);
             _endedItself.Remove(number);

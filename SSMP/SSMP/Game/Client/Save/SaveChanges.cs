@@ -18,19 +18,24 @@ internal class SaveChanges {
     /// The game's own refresh for PlayerData values whose change needs more than the new value: derived values and
     /// the HUD. Abilities need none: the game reads them when they are used (HeroController.CanDash reads hasDash).
     /// </summary>
-    private static readonly Dictionary<string, Action<HeroController>> Refreshes = new() {
+    private static readonly Dictionary<string, Action<HeroController, bool>> Refreshes = new() {
         // CharmUpdate sets maxHealth from maxHealthBase, MAX HP UP makes the HUD's inactive masks appear (the masks
         // listen through EventRegister, not PlayMaker broadcasts), and MaxHealth heals to the new maximum like a mask
         // found in the world
-        ["maxHealthBase"] = hero => {
+        ["maxHealthBase"] = (hero, _) => {
             hero.CharmUpdate();
             EventRegister.SendEvent("MAX HP UP");
             hero.MaxHealth();
         },
-        // The silk spool HUD redraws on SPOOL MAX UP; RefreshSilk drops silk above a lower maximum
-        ["silkMax"] = hero => {
+        // The silk spool HUD redraws on SPOOL MAX UP; RefreshSilk drops silk above a lower maximum. (0.3.23 K8) A join's
+        // arrival is a load: the HUD redrawn as at a load (DrawSpool), no SPOOL MAX UP, which mends a broken spool
+        ["silkMax"] = (hero, load) => {
             hero.RefreshSilk();
-            EventRegister.SendEvent("SPOOL MAX UP");
+            if (load) {
+                SilkSpool.Instance?.DrawSpool();
+            } else {
+                EventRegister.SendEvent("SPOOL MAX UP");
+            }
         }
     };
 
@@ -52,11 +57,15 @@ internal class SaveChanges {
     /// <param name="name">The name of the PlayerData entry.</param>
     /// <param name="own">This game's value before the arrival (read only for the names a refresh follows).</param>
     /// <param name="arrived">The arrived value.</param>
-    public void ApplyPlayerDataSaveChange(string? name, object? own, object? arrived) {
+    /// <param name="joining">Whether it came with the join's snapshot (SaveManager.SetSaveWithData).</param>
+    public void ApplyPlayerDataSaveChange(string? name, object? own, object? arrived, bool joining = false) {
         Logger.Debug($"ApplyPlayerData for name: {name}");
 
         if (name != null && Refreshes.ContainsKey(name)) {
-            _arrivals.Add(name, own, arrived);
+            // (coop, 0.3.23 world Task 10, print only) K8: which side's silkMax is off at the friend's join
+            var pd = PlayerData.instance;
+            Logger.Info($"(coop) Arrived {name}: own {own}, arrived {arrived}; silkMax {pd?.silkMax}, silkSpoolParts {pd?.silkSpoolParts}, IsSilkSpoolBroken {pd?.IsSilkSpoolBroken}");
+            _arrivals.Add(name, own, arrived, joining);
         }
         
         var currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
@@ -72,9 +81,9 @@ internal class SaveChanges {
         var inControl = hero != null && gm != null && gm.GameState == GameState.PLAYING && !hero.cState.dead &&
                         !hero.cState.transitioning;
 
-        foreach (var name in _arrivals.Drain(inControl)) {
-            Logger.Info($"Refreshing arrived value: {name}");
-            Refreshes[name](hero!);
+        foreach (var (name, load) in _arrivals.DrainEach(inControl)) {
+            Logger.Info($"Refreshing arrived value: {name}{(load ? " (the join's, as a load)" : "")}");
+            Refreshes[name](hero!, load);
         }
     }
 

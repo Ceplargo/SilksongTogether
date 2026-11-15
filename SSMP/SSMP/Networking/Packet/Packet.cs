@@ -387,6 +387,19 @@ internal class Packet : IPacket {
         }
     }
 
+    /// <summary>
+    /// (coop) The byte <paramref name="ahead"/> bytes past the current position, without moving it (LateSpawns reads
+    /// the scene host's number for a spawn before deciding whether to play it).
+    /// </summary>
+    /// <exception cref="Exception">Thrown if the packet is not that long.</exception>
+    public byte PeekByte(int ahead) {
+        if ((_buffer?.Count ?? Length) > _readPos + ahead) {
+            return _readableBuffer[_offset + _readPos + ahead];
+        }
+
+        throw new Exception($"Could not peek {ahead} bytes ahead");
+    }
+
     #endregion
 
     #region Reading integral numeric types

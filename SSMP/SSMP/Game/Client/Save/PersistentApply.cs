@@ -78,4 +78,16 @@ internal static class PersistentApply {
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     public static bool ForCache(int arriving, int state, bool live) => live && arriving > state;
+
+    /// <summary>
+    /// (0.3.23) Whether this game skips a hit on a struck thing (a BreakableHolder or a RosaryCache: each saves its hit
+    /// count): a world object's (world: BlockedHits.World, a Dock Flyer's lava rock) in a following game (not sceneHost,
+    /// not alone); the game that runs the room takes it and sends it. A player's hit counts in every game (this game's
+    /// hero's, or the copy of another's swing, whose arriving value then plays nothing more). False is the old rule, so
+    /// CoopQA skip switches it off (struck_world_hit's twin). Each game's copy of a rock falls its own way: the
+    /// following game's DF Lava Rock took Dock_02's Song Shard Barrel 2 to 1 in all three of its orders, sent it, and the
+    /// save kept it (Task 12, runs 2026-11-14_013330-world-pair3 to 5).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    public static bool SkipsHit(bool world, bool sceneHost, bool alone) => world && !sceneHost && !alone;
 }

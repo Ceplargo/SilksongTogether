@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 
 namespace BossRule;
@@ -29,4 +30,30 @@ internal static class FreeTraps {
     /// <summary>Whether another game's freeing frees this game's trap: only one still waiting (a state before the freed
     /// one; none read is a trap not found).</summary>
     public static bool Echoes(string? now, string freed) => now != null && now != freed && now != "Destroyed";
+
+    /// <summary>
+    /// (0.3.23) Each room's fight-on state: while that FSM is in it, the fight a trap started is still on (Bone_05's
+    /// Battle End waits in Idle until her death). A game coming in then must not load the room as before her start.
+    /// </summary>
+    public static readonly (string Scene, string Object, string Fsm, string State)[] FightOns = [
+        ("Bone_05", "Boss Scene", "Battle End", "Idle")
+    ];
+
+    /// <summary>The room's fight-on state, if it has one.</summary>
+    public static (string Scene, string Object, string Fsm, string State)? FightOn(string? scene) =>
+        FightOns.FirstOrDefault(f => f.Scene == scene) is { Scene: not null } on ? on : null;
+
+    /// <summary>
+    /// (0.3.23) Whether this game tells the room, again, that its fight is on: one of its traps was freed here (by its
+    /// own player or an echo) and the fight-on FSM is still in its state. A friend who came into Bone_05 while the host
+    /// fought her loaded her Return path (met, not beaten), its gates open, and walking on into Return Battle's trigger
+    /// shut them and showed her title mid-fight (0.3.20's probe_bellbeast_steps, its join case; known differences).
+    /// </summary>
+    public static bool Resends(bool freedHere, string? fightState, string fightOn) => freedHere && fightState != null && fightState == fightOn;
+
+    /// <summary>
+    /// (0.3.23) Whether a game told the fight is on starts its own trap late: the trap still waits, in a state that
+    /// takes its freeing event (Return Battle's Idle takes ENTER; Start Battle and Title take none).
+    /// </summary>
+    public static bool LateStarts(string? now, string freed, string ev, IEnumerable<string> stateEvents) => Echoes(now, freed) && stateEvents.Contains(ev);
 }

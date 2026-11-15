@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using SSMP.Util;
 using HutongGames.PlayMaker.Actions;
 using SSMP.Game.Client.Entity.Action;
@@ -42,9 +43,10 @@ internal class EntityManager {
     private readonly Dictionary<ushort, EntityUpdate> _pendingEntityUpdates;
 
     /// <summary>
-    /// Buffered reliable updates waiting on entity registration or role assignment.
+    /// Buffered reliable updates waiting on entity registration or role assignment, (coop) each with when it was
+    /// first buffered (LateSpawns).
     /// </summary>
-    private readonly Queue<(ReliableEntityUpdate Update, bool AlreadyInScene)> _pendingReliableUpdates;
+    private readonly Queue<(ReliableEntityUpdate Update, bool AlreadyInScene, float Since)> _pendingReliableUpdates;
 
     /// <summary>
     /// Maximum reliable updates that can be buffered because packet collections encode their item count as a ushort.
@@ -84,7 +86,7 @@ internal class EntityManager {
         _netClient = netClient;
         _entities = new Dictionary<ushort, Entity>();
         _pendingEntityUpdates = new Dictionary<ushort, EntityUpdate>();
-        _pendingReliableUpdates = new Queue<(ReliableEntityUpdate, bool)>();
+        _pendingReliableUpdates = new Queue<(ReliableEntityUpdate, bool, float)>();
     }
 
     /// <summary>
@@ -100,6 +102,8 @@ internal class EntityManager {
     public void RegisterHooks() {
         FsmActionHooks.RegisterHooks();
         MusicComponent.RegisterHooks();
+        // (coop, 0.3.23) a room's random child pick leaves out SSMP's copies (Crawl_03's Crypt Worms)
+        RandomChildPicks.Register();
 
         EntityFsmActions.EntitySpawnEvent += OnGameObjectSpawned;
         SceneManager.sceneLoaded += OnSceneLoaded;
@@ -120,6 +124,7 @@ internal class EntityManager {
     public void DeregisterHooks() {
         FsmActionHooks.DeregisterHooks();
         MusicComponent.DeregisterHooks();
+        RandomChildPicks.Deregister();
 
         EntityFsmActions.EntitySpawnEvent -= OnGameObjectSpawned;
         SceneManager.sceneLoaded -= OnSceneLoaded;
@@ -261,7 +266,12 @@ internal class EntityManager {
     /// Applies a reliable entity update (active state, host FSM data, generic data).
     /// Returns false and buffers the update if the entity isn't ready yet.
     /// </summary>
-    public bool HandleReliableEntityUpdate(ReliableEntityUpdate update, bool alreadyInSceneUpdate = false) {
+    /// <param name="since">(coop) When a buffered update was first buffered; null for one that arrives now.</param>
+    public bool HandleReliableEntityUpdate(
+        ReliableEntityUpdate update,
+        bool alreadyInSceneUpdate = false,
+        float? since = null
+    ) {
         if (!_entities.TryGetValue(update.Id, out var entity) || !_sceneRoleDetermined) {
             if (_pendingReliableUpdates.Count >= MaxPendingReliableUpdates) {
                 Logger.Error(
@@ -273,7 +283,7 @@ internal class EntityManager {
 
             // (coop) with whether it is the room's stored state: replayed as a live one, a late arrival whose boss
             // registers later (a boss scene loads after the room) spawned copies of what had ended (CopiesLate)
-            _pendingReliableUpdates.Enqueue((update, alreadyInSceneUpdate));
+            _pendingReliableUpdates.Enqueue((update, alreadyInSceneUpdate, since ?? Time.unscaledTime));
             return false;
         }
 
@@ -302,7 +312,9 @@ internal class EntityManager {
         }
 
         if (update.UpdateTypes.Contains(EntityUpdateType.Data)) {
-            var waits = entity.UpdateData(update.GenericData, alreadyInSceneUpdate);
+            // (coop) an update that waited seconds for its entity replays no followed throws (LateSpawns)
+            var late = since is { } at && LateSpawns.Late(Time.unscaledTime - at);
+            var waits = entity.UpdateData(update.GenericData, alreadyInSceneUpdate, late);
             if (waits >= 0) {
                 // (coop) the rest waits for the next frame with its death and hide; what was applied comes out
                 update.GenericData.RemoveRange(0, waits);
@@ -391,6 +403,8 @@ internal class EntityManager {
     /// (Climber, Walker, BigCentipede, CameraLockArea, DreamPlatform).
     /// </summary>
     private static IEnumerable<GameObject> CollectEntityCandidates(Scene scene) {
+        if (WakesHiddenMakers()) PreMakeHidden(scene);
+
         // (coop) the room's own objects only: a scan of every loaded object grows with the game's GlobalPool (SceneScan)
         var roots = SceneScan.SceneOnly() && scene.isLoaded ? scene.GetRootGameObjects() : null;
 
@@ -426,6 +440,45 @@ internal class EntityManager {
                .Where(obj => obj.scene == scene && !IsCorpseObject(obj))
                .Distinct();
     }
+
+    private static readonly FieldInfo PreMadePrefab =
+        typeof(PreInstantiateGameObject).GetField("prefab", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    private static readonly MethodInfo SetPreMade =
+        typeof(PreInstantiateGameObject).GetProperty(nameof(PreInstantiateGameObject.InstantiatedGameObject))!.GetSetMethod(true)!;
+
+    /// <summary>
+    /// (coop, 0.3.23) An enemy whose corpse makes an object of its own (a Shellwood Goomba's corpse its Shellwood Gnat) but
+    /// that waits hidden at the scan (Shellwood_01's two under Black Thread States/Normal World) made its corpse and the
+    /// corpse its gnat only when it woke, after the scan, in the scene host's game alone: the other games hide the original
+    /// first, so it never wakes there. That gnat had no id and the others never saw it (gnat_ids). Its corpse and the
+    /// corpse's object are made now, as the game makes them when it wakes, in each game, so the scan gives the object the
+    /// same id everywhere; the prefab is cleared so the corpse's own Awake keeps that object.
+    /// </summary>
+    private static void PreMakeHidden(Scene scene) {
+        if (!scene.isLoaded) return;
+        foreach (var effects in scene.GetRootGameObjects().SelectMany(r => r.GetComponentsInChildren<EnemyDeathEffects>(true))) {
+            if (effects.gameObject.activeInHierarchy || !effects.CorpsePrefab
+                || !effects.CorpsePrefab.GetComponentInChildren<PreInstantiateGameObject>(true)) continue;
+            try {
+                effects.PreInstantiate();
+            } catch (Exception) {
+                continue;  // as ExpandDeathEffects: a PersonalObjectPool corpse cannot be made this early
+            }
+
+            foreach (var pre in effects.GetComponentsInChildren<PreInstantiateGameObject>(true)) {
+                if (pre.InstantiatedGameObject || PreMadePrefab.GetValue(pre) is not GameObject prefab || !prefab) continue;
+                var made = Object.Instantiate(prefab);
+                made.SetActive(false);
+                SetPreMade.Invoke(pre, [made]);
+                PreMadePrefab.SetValue(pre, null);
+            }
+        }
+    }
+
+    /// <summary>(coop) Not inlined: gnat_ids' twin skips it, which gives false (a hidden maker's gnat is made late).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool WakesHiddenMakers() => true;
 
     private static bool IsCorpseObject(GameObject gameObject) {
         return gameObject.name.StartsWith("corpse", StringComparison.OrdinalIgnoreCase) ||
@@ -537,8 +590,8 @@ internal class EntityManager {
         // Iterate a snapshot count; newly buffered reliable updates stay in the queue.
         var count = _pendingReliableUpdates.Count;
         for (var i = 0; i < count; i++) {
-            var (update, alreadyInScene) = _pendingReliableUpdates.Dequeue();
-            if (!HandleReliableEntityUpdate(update, alreadyInScene)) continue;
+            var (update, alreadyInScene, since) = _pendingReliableUpdates.Dequeue();
+            if (!HandleReliableEntityUpdate(update, alreadyInScene, since)) continue;
             ReleaseUpdate(update);
         }
     }
@@ -557,7 +610,7 @@ internal class EntityManager {
 
         _pendingEntityUpdates.Clear();
 
-        foreach (var (pendingUpdate, _) in _pendingReliableUpdates) {
+        foreach (var (pendingUpdate, _, _) in _pendingReliableUpdates) {
             ReleaseUpdate(pendingUpdate);
         }
 

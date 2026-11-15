@@ -27,9 +27,10 @@ internal sealed class LateCatches<T> {
     /// whole-branch review of 2026-11-05), else null. Honouring it uses it up, unless usesUp is false (the twin's
     /// switch off: every late catch honoured, as before).
     /// </summary>
-    public IReadOnlyList<T>? For(string named, float now, bool usesUp = true) {
+    /// <remarks>(coop, 0.3.23) graceS: added to KeepS for a catch sent just after its own game froze (FrameGaps.Grace).</remarks>
+    public IReadOnlyList<T>? For(string named, float now, bool usesUp = true, float graceS = 0f) {
         foreach (var (path, seen) in _seen) {
-            if (!MultiHitPath.Names(path, named) || now - seen.At > KeepS) continue;
+            if (!MultiHitPath.Names(path, named) || now - seen.At > KeepS + graceS) continue;
             if (_took.TryGetValue(path, out var took) && took >= seen.At - KeepS) return null;
             if (usesUp) _took[path] = now;
             return seen.Moves;

@@ -64,6 +64,17 @@ internal static class BlockedHits {
     /// hitter's game sends the block it shows.</summary>
     public static bool LeavesOutPlayer(bool remotePlayer) => remotePlayer;
 
+    /// <summary>
+    /// (0.3.23) Whether a replayed landed hit (PlayMissedHits: one that took health in the hitter's game) plays here as
+    /// the enemy's own hit effects only (its flash and sound: no stun, no FSM hit event, health unchanged), not as the
+    /// game's hit: this game's enemy blocks it now (blocking: HealthManager.IsBlockingByDirection), and the game would
+    /// turn the hit into a block. Bone_16's Bone Crawler began its Spike 10 to 20 ms after the hit landed, and the other
+    /// game played it as sword_hit_reject (2026-11-13_125617-enemies, 2026-11-12_230519-enemies), or with LeavesOutPlayer
+    /// as no sound at all where the enemy was already blocking (Belltown_04's Bell Goomba, Bone_East_16's Bone Hunter).
+    /// A hit the hitter's own game blocked took no health, so it is no replay and its block stays the hitter's (SendsPlayer).
+    /// </summary>
+    public static bool ReplaysEffectsOnly(bool blocking) => blocking && PlaysBlockedReplays();
+
     /// <summary>The switch blocked_hit_copy's twin turns off (a skipped bool method returns false): no block sent.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool SendsWorldBlocks() => true;
@@ -77,4 +88,9 @@ internal static class BlockedHits {
     /// for another player's hit).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool SendsPlayerBlocks() => true;
+
+    /// <summary>The switch invincible_hit's twin turns off: a landed hit replayed while the enemy blocks plays as the
+    /// game's hit, a block.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool PlaysBlockedReplays() => true;
 }

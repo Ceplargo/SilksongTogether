@@ -242,9 +242,6 @@ internal class EntityProcessor {
     /// Creates the same ID for a static scene object even when another client has a different set or discovery order.
     /// </summary>
     private static ushort GetStableSceneId(GameObject gameObject) {
-        const uint offset = 2166136261;
-        const uint prime = 16777619;
-        var hash = offset;
         var hierarchy = new Stack<Transform>();
 
         for (var current = gameObject.transform; current != null; current = current.parent) {
@@ -255,31 +252,47 @@ internal class EntityProcessor {
             return FlockCopies.Id(gameObject.scene.name, hierarchy.Select(t => (t.name, t.GetSiblingIndex())));
         }
 
-        AddString(gameObject.scene.name);
-        while (hierarchy.Count > 0) {
-            var current = hierarchy.Pop();
-            AddString(current.name);
-            var position = current.localPosition;
-            AddInt(BitConverter.SingleToInt32Bits(position.x));
-            AddInt(BitConverter.SingleToInt32Bits(position.y));
-            AddInt(BitConverter.SingleToInt32Bits(position.z));
+        // (coop) an object a scene object made on Awake is hashed from its maker (PreMadeIds)
+        var maker = MakerOf(gameObject);
+        return PreMadeIds.Hash(gameObject.scene.name, PreMadeIds.Chain(Chain(gameObject.transform), maker ? MakerChain(maker) : null));
+
+        static List<(string Name, float X, float Y, float Z)> Chain(Transform leaf) {
+            var chain = new List<(string Name, float X, float Y, float Z)>();
+            for (var current = leaf; current != null; current = current.parent) {
+                var position = current.localPosition;
+                chain.Insert(0, (current.name, position.x, position.y, position.z));
+            }
+
+            return chain;
         }
 
-        return (ushort) (hash ^ hash >> 16);
+        // the maker by names and sibling places only: its corpse's place differed between the two games when the gnats
+        // registered (gnat_ids' first green, 2026-11-14_005543: no two ids alike)
+        static List<(string Name, float X, float Y, float Z)> MakerChain(Transform leaf) {
+            var chain = new List<(string Name, float X, float Y, float Z)>();
+            for (var current = leaf; current != null; current = current.parent) {
+                chain.Insert(0, (current.name, current.GetSiblingIndex(), 0f, 0f));
+            }
 
-        void AddString(string value) {
-            foreach (var character in value) {
-                hash = (hash ^ character) * prime;
+            return chain;
+        }
+    }
+
+    // (coop) each object made by a PreInstantiateGameObject, by the object that made it; read once a frame
+    private static Dictionary<GameObject, Transform> _makers = new();
+    private static int _makersFrame = -1;
+
+    /// <summary>(coop) The scene object whose PreInstantiateGameObject made this root object on Awake, or null.</summary>
+    private static Transform MakerOf(GameObject gameObject) {
+        if (gameObject.transform.parent != null) return null;
+        if (_makersFrame != Time.frameCount) {
+            _makersFrame = Time.frameCount;
+            _makers = new Dictionary<GameObject, Transform>();
+            foreach (var pre in UnityEngine.Object.FindObjectsByType<PreInstantiateGameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None)) {
+                if (pre.InstantiatedGameObject) _makers[pre.InstantiatedGameObject] = pre.transform;
             }
         }
 
-        void AddInt(int value) {
-            unchecked {
-                hash = (hash ^ (byte) value) * prime;
-                hash = (hash ^ (byte) (value >> 8)) * prime;
-                hash = (hash ^ (byte) (value >> 16)) * prime;
-                hash = (hash ^ (byte) (value >> 24)) * prime;
-            }
-        }
+        return _makers.TryGetValue(gameObject, out var maker) ? maker : null;
     }
 }

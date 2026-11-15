@@ -28,6 +28,22 @@ internal static class MultiHitPath {
     /// <summary>The message for that player's hero caught by the named box (a box's path has no bar, a name may).</summary>
     public static string Message(string player, string named) => player + "|" + named;
 
+    /// <summary>
+    /// (coop, 0.3.23) A catch message with how long the sending game was frozen just before (FrameGaps), in whole
+    /// milliseconds after a tab (a box's path and a player's name have none).
+    /// </summary>
+    public static string Stamp(string message, float frozenS) =>
+        message + "\t" + ((int) (frozenS * 1000f + 0.5f)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>(coop, 0.3.23) A message without its stamp, and the freeze it carries (0 for none).</summary>
+    public static (string Message, float FrozenS) Unstamp(string message) {
+        var tab = message.LastIndexOf('\t');
+        return tab >= 0 && int.TryParse(message.Substring(tab + 1), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var ms)
+            ? (message.Substring(0, tab), ms / 1000f)
+            : (message, 0f);
+    }
+
     /// <summary>A message read back, or null if it is none.</summary>
     public static (string Player, string Named)? Read(string message) {
         var bar = message.LastIndexOf('|');

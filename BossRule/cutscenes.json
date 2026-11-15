@@ -17,7 +17,8 @@
     "note": "A new game starts in the cinematic scene Opening_Sequence (GameManager.StartNewGame), then Tut_01, where Hornet lies down at 1 mask until the player binds (ListenForCast). The Opening_Sequence part is the host's own: a cinematic scene, where no friend can be (SSMP's SceneUtil); the probe plays the Tut_01 part.",
     "probe": {
       "gate": "left2",
-      "length_s": 60
+      "length_s": 60,
+      "rejoin_press": "Cast"
     },
     "follow": false
   },
@@ -181,7 +182,7 @@
       "MushroomQuestFound3"
     ],
     "how": "interact",
-    "note": "Each find of the Mr Mushroom quest (begun at Aqueduct_05's tablet): a talk, then he flies off in a rocket with the hero's control taken.",
+    "note": "Each find of the Mr Mushroom quest (begun at Aqueduct_05's tablet): a talk, then he flies off in a rocket with the hero's control taken. Not out without the quest (his Check: CANCEL, Not Here); hidden till a hero plays the Needolin by him (Hidden: CheckHeroPerformanceRegion with the hero's own Needolin range, which the tests' IsPerforming does not give); his rocket (Rocket Start) only at the quest's last find (TYPE FINAL), not in Tut_03 (MRMUSH_LOC1). No test copy starts him (0.3.23 world Task 17).",
     "follow": false
   },
   {
@@ -343,11 +344,9 @@
     ],
     "values": [],
     "how": "touch",
-    "needs": {
-      "defeatedBellBeast": true
-    },
     "note": "After the Bell Beast its Silk Heart bobs where it fell; touching it (Trigger2dEvent) loads Memory_Silk_Heart_BellBeast, and Silk Heart Memory Return brings the hero back.",
     "probe": {
+      "win": "defeatedBellBeast",
       "at": "Silk Heart",
       "length_s": 60
     },
@@ -366,11 +365,9 @@
     ],
     "values": [],
     "how": "touch",
-    "needs": {
-      "defeatedSongGolem": true
-    },
     "note": "The same after the Fourth Chorus, to Memory_Silk_Heart_SongGolem.",
     "probe": {
+      "win": "defeatedSongGolem",
       "at": "Silk Heart",
       "length_s": 60
     },
@@ -639,6 +636,7 @@
     "name": "needolin_memory",
     "kind": "memory",
     "scenes": [
+      "Shellwood_11b",
       "Ant_Queen",
       "Aqueduct_06",
       "Aqueduct_07",
@@ -647,8 +645,7 @@
       "Crawl_01",
       "Crawl_10",
       "Dock_02b",
-      "Greymoor_21",
-      "Shellwood_11b"
+      "Greymoor_21"
     ],
     "object": "thread_memory",
     "fsm": "FSM",
@@ -660,7 +657,7 @@
     "needs": {
       "hasNeedolin": true
     },
-    "note": "The Needolin played in its region (CheckHeroPerformanceRegion) takes control and moves the camera into a memory and back. Also as thread_memory vassal (Aqueduct_05, Aspid_01, Bone_East_14, Shellwood_26) and thread_memory_tank (Organ_01).",
+    "note": "The Needolin played in its region (CheckHeroPerformanceRegion) takes control and moves the camera into a memory and back. Also as thread_memory vassal (Aqueduct_05, Aspid_01, Bone_East_14, Shellwood_26) and thread_memory_tank (Organ_01). Shellwood_11b first: its deep memory is on in a new save; Ant_Queen's waits for her Deep Melody talk.",
     "probe": {
       "at": "thread_memory",
       "length_s": 30

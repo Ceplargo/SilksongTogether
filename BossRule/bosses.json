@@ -606,6 +606,12 @@
   "onward": [
    {"object": "Boss Scene/Gates/Battle Gate", "from": ["left1", "left2"]}
   ],
+  "end": {
+   "object": "Boss Scene",
+   "fsm": "Control",
+   "state": "End",
+   "from": "Init"
+  },
   "hp": 650,
   "phases": [
    {

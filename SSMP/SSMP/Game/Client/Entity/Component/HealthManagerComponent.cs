@@ -535,6 +535,8 @@ internal class HealthManagerComponent : EntityComponent {
                     ApplyCorpseSnapshot(_clientCorpse, corpsePosition, corpseRotation, corpseVelocity);
                     if (corpseNumber != 0) {
                         FollowCorpse?.Invoke(corpseNumber, _clientCorpse);
+                        // (coop, 0.3.23) its fuse goes off with the scene host's corpse (CorpseFuse)
+                        CorpseFuse.Start(_clientCorpse);
                     }
                 }
 
@@ -705,9 +707,8 @@ internal class HealthManagerComponent : EntityComponent {
             var (attack, element, effects) = HitKind.Unpack(due[i].Kind);
             var played = HitKind.Plays();
             if (played && !HitKind.IsHit(due[i].Kind)) continue;
-            var hp = healthManager.hp;
             var source = NearestRemotePlayer(healthManager.transform.position);
-            healthManager.Hit(new HitInstance {
+            var hit = new HitInstance {
                 Source = source,
                 AttackType = played ? (AttackTypes) attack : AttackTypes.Nail,
                 NailElement = played ? (NailElements) element : NailElements.None,
@@ -723,7 +724,23 @@ internal class HealthManagerComponent : EntityComponent {
                 NonLethal = true,
                 HitEffectsType = played ? (EnemyHitEffectsProfile.EffectsTypes) effects : EnemyHitEffectsProfile.EffectsTypes.Full,
                 SilkGeneration = HitSilkGeneration.None
-            });
+            };
+            // (0.3.23) the hit landed in the hitter's game; an enemy here that blocks it now (its Spike or block begun
+            // since) plays its own hit effects, not the block the game would make of it (BlockedHits.ReplaysEffectsOnly)
+            var way = DirectionUtils.GetCardinalDirection(hit.GetActualDirection(healthManager.transform,
+                HitInstance.TargetType.Regular));
+            if (BlockedHits.ReplaysEffectsOnly(healthManager.IsBlockingByDirection(way, hit.AttackType, hit.SpecialType))) {
+                healthManager.GetComponent<IHitEffectReciever>()?.ReceiveHitEffect(hit);
+                if (LogsHealth) {
+                    Logger.Debug($"(coop) landed hit played as its effects, the enemy blocking: {healthManager.name}, " +
+                                 $"frame {Time.frameCount}");
+                }
+
+                continue;
+            }
+
+            var hp = healthManager.hp;
+            healthManager.Hit(hit);
             healthManager.hp = hp;
         }
     }

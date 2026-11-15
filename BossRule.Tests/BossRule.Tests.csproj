@@ -26,6 +26,7 @@
         <Compile Include="..\BossRule\EarlyRises.cs" Link="EarlyRises.cs"/>
         <Compile Include="..\BossRule\MultiHitPath.cs" Link="MultiHitPath.cs"/>
         <Compile Include="..\BossRule\LateCatches.cs" Link="LateCatches.cs"/>
+        <Compile Include="..\BossRule\FrameGaps.cs" Link="FrameGaps.cs"/>
         <Compile Include="..\BossRule\ArenaEnd.cs" Link="ArenaEnd.cs"/>
         <Compile Include="..\BossRule\RoomCatalog.cs" Link="RoomCatalog.cs"/>
         <Compile Include="..\BossRule\FreeTraps.cs" Link="FreeTraps.cs"/>

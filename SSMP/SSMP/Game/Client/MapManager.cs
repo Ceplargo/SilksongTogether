@@ -97,21 +97,16 @@ internal class MapManager : IMapManager {
             return;
         }
     
-        // Check whether the player has a map position for an icon
-        var hasMapPosition = TryGetMapPosition(out var newPosition);
-    
-        // Whether we have a map icon active
-        var hasMapIcon = hasMapPosition;
-        if (!_serverSettings.AlwaysShowMapIcons) {
-            if (!_serverSettings.OnlyBroadcastMapIconWithCompass) {
-                hasMapIcon = false;
-            } else {
-                // OnlyBroadcastMapIconWithCompass: suppress unless the compass tool exists and is equipped.
-                if (!Gameplay.CompassTool || !Gameplay.CompassTool.IsEquipped) {
-                    hasMapIcon = false;
-                }
-            }
-        }
+        // Whether we have a map icon active: a map position, and the settings let it show (OnlyBroadcastMapIconWithCompass:
+        // only with the compass tool equipped). (coop, optimization) The position, a walk over the map's scene names, is
+        // looked up only when the icon may show: with the default settings and no compass, never (LooksUpShownIconsOnly)
+        var mayShow = MapIconRule.MayShow(_serverSettings.AlwaysShowMapIcons,
+            _serverSettings.OnlyBroadcastMapIconWithCompass,
+            static () => Gameplay.CompassTool && Gameplay.CompassTool.IsEquipped);
+        var newPosition = Vector2.zero;
+        var hasMapIcon = LooksUpShownIconsOnly()
+            ? mayShow && TryGetMapPosition(out newPosition)
+            : TryGetMapPosition(out newPosition) && mayShow;
     
         if (hasMapIcon != _lastSentMapIcon) {
             _lastSentMapIcon = hasMapIcon;
@@ -141,6 +136,11 @@ internal class MapManager : IMapManager {
             _lastPosition = newPosition;
         }
     }
+
+    /// <summary>(coop) Whether the map position is looked up only when this player's icon may show (optimization, mini
+    /// PC job 28). Not inlined: the twin skips it, and every frame looks it up again.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static bool LooksUpShownIconsOnly() => true;
 
     /// <summary>
     /// Try to get the current map position of the local player.

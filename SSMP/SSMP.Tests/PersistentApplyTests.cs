@@ -70,4 +70,37 @@ public class PersistentApplyTests {
     public void A_cache_hit_elsewhere_is_owed_its_hits_here(int arriving, int state, bool live, bool owed) {
         Assert.Equal(owed, PersistentApply.ForCache(arriving, state, live));
     }
+
+    // Dock_02's Song Shard Barrel: the following game's own DF Lava Rock took it 2 to 1 in all three orders, and that game
+    // sent it (Task 12, runs 2026-11-14_013330-world-pair3 to 5); the game that runs the room keeps its rocks' hits
+    [Theory]
+    [InlineData(false, false, false, false)]
+    [InlineData(true, false, false, true)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, false, true, false)]
+    public void A_world_hit_on_a_struck_thing_counts_only_where_the_room_runs(bool world, bool sceneHost, bool alone,
+        bool skips) {
+        Assert.Equal(skips, PersistentApply.SkipsHit(world, sceneHost, alone));
+    }
+
+    // Review Focus 4: both players strike one thing in the same moment. Each game takes its hero's hit and the copy of the
+    // other's (a player's, so it counts in a following game too); the value each sends then plays nothing in the other.
+    // The real count (two hits) is kept, never both games' hits added (four).
+    [Fact]
+    public void Both_players_striking_at_once_keep_the_real_count() {
+        foreach (var sceneHost in new[] { true, false }) {
+            var hitsLeft = 3;
+            var state = 0;
+            for (var hit = 0; hit < 2; hit++) {
+                if (PersistentApply.SkipsHit(false, sceneHost, false)) continue;
+                hitsLeft--;
+                state++;
+            }
+
+            Assert.Equal(1, hitsLeft);
+            Assert.Equal(2, state);
+            Assert.False(PersistentApply.ForHolder(hitsLeft, hitsLeft, true));
+            Assert.False(PersistentApply.ForCache(state, state, true));
+        }
+    }
 }

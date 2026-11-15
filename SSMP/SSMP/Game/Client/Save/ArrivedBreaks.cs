@@ -4,13 +4,18 @@ using System.Runtime.CompilerServices;
 
 namespace SSMP.Game.Client.Save;
 
+/// <summary>How an arrived break breaks the live FSM: an event sent to it, or a state it is moved into.</summary>
+internal readonly record struct ArrivedBreak(string? Event, string? State);
+
 /// <summary>
 /// (coop, 0.3.21) An object that breaks by its FSM (Bone_07's tool_metal_deposit: Control's Idle takes hits by
 /// ReceivedDamage and goes HIT, then BREAK at its count; Break sets its persistent "Activated") broken in one game
 /// only: the other player's copied swing landed there while their own swing missed, and the arrived "Activated" only
 /// set the variable on the live FSM, which stayed in Idle (the world sweep, both ways, 2026-11-10: state, solids,
 /// break sound and shake in one game). An arrived break now sends the FSM its own BREAK when its state takes one, so
-/// it breaks the game's own way here too. Unity-free, so it is tested without the game.
+/// it breaks the game's own way here too. (0.3.23) The same for the two walls whose idle state takes no BREAK: a One
+/// Way Wall (break_floor) broken from outside stayed standing in the other game, whose hero was out of its range
+/// (probe_remask_false, 3 of 3). Unity-free, so it is tested without the game.
 /// </summary>
 internal static class ArrivedBreaks {
     /// <summary>
@@ -23,10 +28,19 @@ internal static class ArrivedBreaks {
     private static readonly string[] Breakers = ["tool_metal_deposit", "Collapser Small"];
 
     /// <summary>
-    /// Whether an arrived value breaks the live FSM: one of the Breakers, true now, not before, and its state takes BREAK.
+    /// How an arrived value breaks the live FSM (fsm: its name; stateEvents: its active state's events): only true now,
+    /// not before; one of the Breakers whose state takes BREAK, or one of the walls in its idle state; else nothing.
     /// </summary>
-    public static bool Sends(string name, bool value, bool before, IEnumerable<string> stateEvents) =>
-        value && !before && Breaks() && (!ByName() || Breakers.Any(name.StartsWith)) && stateEvents.Contains("BREAK");
+    public static ArrivedBreak? Of(string name, string fsm, bool value, bool before, ICollection<string> stateEvents) {
+        if (!value || before || !Breaks()) return null;
+        if (stateEvents.Contains("BREAK") && (!ByName() || Breakers.Any(name.StartsWith))) return new ArrivedBreak("BREAK", null);
+        // (0.3.23) the walls whose idle state takes no BREAK, by their FSM: breakable_wall_v2's Idle takes the game's
+        // own QUICK BREAK; break_floor's Idle takes hits only, each checking this game's hero range, so its Break state
+        // (its last hit's) is entered
+        if (fsm == "breakable_wall_v2" && stateEvents.Contains("QUICK BREAK")) return new ArrivedBreak("QUICK BREAK", null);
+        if (fsm == "break_floor" && stateEvents.Contains("NAIL HIT")) return new ArrivedBreak(null, "Break");
+        return null;
+    }
 
     /// <summary>
     /// The name check's switch (local_traps' chain-drop twin skips it, which gives false: every object breaks on an

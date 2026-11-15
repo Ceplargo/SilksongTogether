@@ -82,11 +82,15 @@ internal static class MultiHits {
     /// for each FSM there it takes into a state, with that state's Hero aimed at the stand-in.
     /// </summary>
     public static void Received(string message) {
-        if (SceneHost?.Invoke() != true || MultiHitPath.Read(message) is not var (player, named)) return;
+        // (coop, 0.3.23) the sending game's freeze just before it sent: its catch is that much later here
+        var (plain, frozen) = MultiHitPath.Unstamp(message);
+        if (SceneHost?.Invoke() != true || MultiHitPath.Read(plain) is not var (player, named)) return;
+        var grace = GracesFreeze() ? FrameGaps.Grace(frozen) : 0f;
         var at = PlayerObject?.Invoke(player);
         var box = Object.FindObjectsByType<PlayMakerFSM>(FindObjectsSortMode.None).FirstOrDefault(f =>
             Wounders.Contains(f.FsmName) && f.isActiveAndEnabled && MultiHitPath.Names(PathOf(f.transform), named));
-        if (at != null && box == null && HonoursLate() && Late.For(named, Time.unscaledTime, TakesConnects()) is { } moves) {
+        if (at != null && box == null && HonoursLate() && Late.For(named, Time.unscaledTime, TakesConnects(), grace) is
+            { } moves) {
             // (coop) her move's box went here just before the catch came: she goes where the box would have taken her
             var done = new List<string>();
             foreach (var (fsm, state) in moves) {
@@ -96,14 +100,16 @@ internal static class MultiHits {
                 done.Add($"{fsm.FsmName} to {state}");
             }
 
-            Debug.Log($"[BossRule] Multi Hit from {player} by {named}: its box went just before; {string.Join("; ", done)}");
+            Debug.Log($"[BossRule] Multi Hit from {player} by {named}: its box went just before (its game frozen " +
+                      $"{frozen:0.000} s); {string.Join("; ", done)}");
             return;
         }
 
         if (at == null || box == null) {
             // (coop) under lag the catch can come after her move ended here (multi_hits' lag run, the Widow's charge)
             Debug.Log($"[BossRule] Multi Hit from {player} by {named}: " +
-                      (box == null ? "no such box out here" : "that player is not in this room"));
+                      (box == null ? "no such box out here" : "that player is not in this room") +
+                      $" (its game frozen {frozen:0.000} s)");
             return;
         }
 
@@ -179,6 +185,18 @@ internal static class MultiHits {
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool TakesConnects() => true;
+
+    /// <summary>(coop, 0.3.23) This game's recent frames (BossRulePlugin's Update): a catch says how long it was frozen.
+    /// </summary>
+    public static readonly FrameGaps Frames = new();
+
+    /// <summary>(coop, 0.3.23) This game's longest frame of the last FrameGaps.WindowS.</summary>
+    public static float Frozen() => Frames.Longest(Time.unscaledTime);
+
+    /// <summary>(coop, 0.3.23) A catch sent just after its game froze is kept that much longer. Not inlined:
+    /// freeze_catch's twin skips it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool GracesFreeze() => true;
 
     /// <summary>A catch that comes just after its box went is honoured. Not inlined: late_catch's twin skips it.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]

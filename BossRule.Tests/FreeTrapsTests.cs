@@ -47,4 +47,29 @@ public class FreeTrapsTests {
         Assert.False(FreeTraps.Echoes("Destroy", "Destroy"));
         Assert.False(FreeTraps.Echoes(null, "Destroy"));
     }
+
+    // (0.3.23, K11) a friend who came into Bone_05 while the host fought her loaded her Return path, its gates open; the
+    // host's game tells the room the fight is on, every second, while its Battle End waits in Idle
+    [Fact]
+    public void Her_room_has_its_fight_on_state() {
+        Assert.Equal(("Bone_05", "Boss Scene", "Battle End", "Idle"), FreeTraps.FightOn("Bone_05"));
+        Assert.Null(FreeTraps.FightOn("Bone_15"));
+    }
+
+    [Fact]
+    public void A_game_whose_trap_was_freed_tells_the_room_while_her_fight_is_on() {
+        Assert.True(FreeTraps.Resends(true, "Idle", "Idle"));
+        Assert.False(FreeTraps.Resends(true, "Heart Get", "Idle"));
+        Assert.False(FreeTraps.Resends(false, "Idle", "Idle"));
+        Assert.False(FreeTraps.Resends(true, null, "Idle"));
+    }
+
+    // the late game's Return Battle in Idle takes ENTER; past it (Start Battle, Title) it takes none
+    [Fact]
+    public void A_late_game_starts_only_a_trap_that_still_waits() {
+        Assert.True(FreeTraps.LateStarts("Idle", "Scene Setup", "ENTER", ["ENTER"]));
+        Assert.False(FreeTraps.LateStarts("Start Battle", "Scene Setup", "ENTER", ["FINISHED"]));
+        Assert.False(FreeTraps.LateStarts("Scene Setup", "Scene Setup", "ENTER", ["FINISHED"]));
+        Assert.False(FreeTraps.LateStarts(null, "Scene Setup", "ENTER", ["ENTER"]));
+    }
 }

@@ -369,7 +369,9 @@ internal static partial class EntityFsmActions {
             while (true) {
                 yield return new WaitForSeconds(action.frequency.Value);
 
-                if (action.gameObject.Value == null) {
+                // (coop) its copy gone, as the other over-time replays: a copy hidden mid-replay with the friend still in
+                // the room kept flinging (fling_gone: the Giant Centipede's Spit Roof, 59 shots in 3 s)
+                if (action.gameObject.Value == null || EndsGoneFlings() && CopyGone(action)) {
                     break;
                 }
 
@@ -565,6 +567,10 @@ internal static partial class EntityFsmActions {
     /// </summary>
     private static bool IsEnemyPrefab(GameObject prefab) =>
         IsObjectInRegistry(prefab) && prefab.GetComponent<HealthManager>() != null;
+
+    /// <summary>(coop) Whether a copy's FlingObjectsFromGlobalPoolTime replay ends when its copy is gone.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // fling_gone's twin switches it off with a patch
+    internal static bool EndsGoneFlings() => true;
 
     /// <summary>
     /// Whether the copy a replayed spawn belongs to is gone (its room unloaded) or hidden (this game took the room

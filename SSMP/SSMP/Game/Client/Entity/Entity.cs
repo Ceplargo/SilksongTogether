@@ -61,6 +61,23 @@ internal class Entity {
     private Hook? _activateGameObjectHook;
 
     /// <summary>
+    /// (coop) One hook on each of those three game-wide methods for every entity, which finds its entity by the object
+    /// (SharesHooks): a hook per entity made MonoMod compile and pin a method for each enemy copy, about 180 a room and
+    /// none ever freed (11,000 in a 30-minute walk, optimization lead 1), and ran every sprite animation in the game
+    /// through one layer per live copy. Each map holds an entity only while its own hook would have been on.
+    /// </summary>
+    private static readonly Dictionary<tk2dSpriteAnimator, Entity> Animated = new(ByReference<tk2dSpriteAnimator>.Instance);
+
+    /// <summary>(coop) Each entity's client object, which the pool must not recycle (SharesHooks).</summary>
+    private static readonly Dictionary<GameObject, Entity> CopyObjects = new(ByReference<GameObject>.Instance);
+
+    /// <summary>(coop) Each entity's host object until its scene host is known (SharesHooks).</summary>
+    private static readonly Dictionary<GameObject, Entity> HeldHosts = new(ByReference<GameObject>.Instance);
+
+    /// <summary>(coop) The three shared hooks, made with the first entity and kept for the session (SharesHooks).</summary>
+    private static Hook? _sharedPlayHook, _sharedRecycleHook, _sharedActivateHook;
+
+    /// <summary>
     /// Whether the entity has a parent entity.
     /// </summary>
     private readonly bool _hasParent;
@@ -214,6 +231,7 @@ internal class Entity {
             };
 
             DestroyManagedChildren(Object.Client);
+            DropPreMade(Object.Client);
             Originals.Add(Object.Client, hostObject);
 
             _hasParent = false;
@@ -269,36 +287,25 @@ internal class Entity {
                 }
             }
 
-            _spriteAnimatorPlayHook = new Hook(
-                typeof(tk2dSpriteAnimator).GetMethod(
-                    nameof(tk2dSpriteAnimator.Play),
-                    [typeof(tk2dSpriteAnimationClip), typeof(float), typeof(float)]
-                ),
-                OnAnimationPlayed
-            );
+            if (SharesHooks()) {
+                Animated[_animator.Host] = this;
+                if (_animator.Client != null) Animated[_animator.Client] = this;
+            } else {
+                _spriteAnimatorPlayHook = new Hook(PlayMethod, OnAnimationPlayed);
+            }
         }
 
         // Always disallow the client object from being recycled, because it will simply be destroyed
-        _objectPoolRecycleHook = new Hook(
-            typeof(ObjectPool).GetMethod(
-                nameof(ObjectPool.Recycle),
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static,
-                null,
-                [typeof(GameObject)],
-                null
-            ),
-            ObjectPoolOnRecycleGameObject
-        );
-
         // Register a hook for the ActivateGameObject action to update the active state of the host game object
         // before scene host is determined
-        _activateGameObjectHook = new Hook(
-            typeof(ActivateGameObject).GetMethod(
-                nameof(ActivateGameObject.OnEnter),
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
-            ),
-            OnDoActivateGameObject
-        );
+        if (SharesHooks()) {
+            CopyObjects[Object.Client] = this;
+            HeldHosts[Object.Host] = this;
+            MakeSharedHooks();
+        } else {
+            _objectPoolRecycleHook = new Hook(RecycleMethod, ObjectPoolOnRecycleGameObject);
+            _activateGameObjectHook = new Hook(ActivateMethod, OnDoActivateGameObject);
+        }
 
         _fsms = new HostClientPair<List<PlayMakerFSM>> {
             Host = Object.Host.GetComponents<PlayMakerFSM>().ToList(),
@@ -1227,6 +1234,7 @@ internal class Entity {
         // Deregister the hook for updating the active value of the host object
         _activateGameObjectHook?.Dispose();
         _activateGameObjectHook = null;
+        Forget(HeldHosts, Object.Host);
     }
 
     /// <summary>
@@ -1276,11 +1284,34 @@ internal class Entity {
         // Deregister the hook for updating the active value of the host object
         _activateGameObjectHook?.Dispose();
         _activateGameObjectHook = null;
+        Forget(HeldHosts, Object.Host);
 
         foreach (var component in _components.Values) {
             component.InitializeClient(sceneHostEpoch);
         }
     }
+
+    private static readonly FieldInfo PreMadePrefab =
+        typeof(PreInstantiateGameObject).GetField("prefab", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    /// <summary>
+    /// (coop, 0.3.23) A copy is made with Instantiate, so its corpse's PreInstantiateGameObject made the copy its own
+    /// Shellwood Gnat, or makes one when the corpse first wakes. When the copy died, its corpse let that gnat out, unshared:
+    /// the following game flew its own gnats beside the copies of the room runner's (gnat_ids: Shellwood_01's 6 of its own
+    /// to the host's 6). The copy's pre-made objects go and its prefab is cleared, so the corpse finds none; the runner's
+    /// gnat, an entity, is the one shown.
+    /// </summary>
+    private static void DropPreMade(GameObject copy) {
+        if (!DropsCopiesPreMade()) return;
+        foreach (var pre in copy.GetComponentsInChildren<PreInstantiateGameObject>(true)) {
+            PreMadePrefab.SetValue(pre, null);
+            if (pre.InstantiatedGameObject) UnityEngine.Object.Destroy(pre.InstantiatedGameObject);
+        }
+    }
+
+    /// <summary>(coop) Not inlined: gnat_ids' twin skips it, which gives false (a copy keeps its own pre-made gnat).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool DropsCopiesPreMade() => true;
 
     /// <summary>Whether a copy whose original is gone is hidden at a takeover. Not inlined: host_takeover's twin skips it.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1406,6 +1437,28 @@ internal class Entity {
             }
         }
 
+        // We need to set the isKinematic property of rigid bodies to ensure physics work again after enabling
+        // the host object. In Hornet 1 this is necessary because another state sets this property normally in the
+        // fight. See the "Wake" or "Refight Ready" state of the "Control" FSM on Hornet 1.
+        // For the Mantis Lord and City Elevator entity, this should never be disabled, since they are always kinematic.
+        // (coop) Kinematic instead for an original with gravity and no solid collider: hidden for its wave with its
+        // collider off, made dynamic it fell through the floor (TakeoverBodies)
+        // (coop, 0.3.23) Set before the states are entered, so a state that sets the body has the last word: Coral_02's
+        // hanging Blade Spider, held kinematic by its Ambush Ready, was made dynamic after it and fell (TakeoverStates)
+        void SetBody() {
+            var rigidBody = Object.Host.GetComponent<Rigidbody2D>();
+            if (rigidBody != null) {
+                //Logger.Debug("  Resetting isKinematic of Rigidbody to ensure physics work for host object");
+                rigidBody.isKinematic = !TakeoverBodies.MakesDynamic(
+                    Object.Host.GetComponents<Collider2D>().Any(collider => collider.enabled && !collider.isTrigger),
+                    rigidBody.gravityScale != 0f
+                );
+            }
+        }
+
+        var bodyFirst = TakeoverStates.SetsBodyFirst();
+        if (bodyFirst) SetBody();
+
         //Logger.Debug("  Restoring FSM states from snapshots");
 
         // (coop) what SSMP's copy showed of the objects the enemy throws goes to the room's own first, so each state
@@ -1438,10 +1491,24 @@ internal class Entity {
             // An action that needs the enemy's own start-up (Awake) throws while the original is still inactive, as
             // a crawler's StartCrawler does, and stopped the take-over of this enemy and every one after it; that
             // state is entered again once the original is active
+            // (coop, 0.3.23) A coroutine an entered action starts is refused while the original is inactive, with a
+            // logged error and no exception: Coral_02's Pilgrim BellThrower's Patrol walk, so it stood still. That
+            // state is entered again too (TakeoverStates)
+            var refused = false;
+            void Refused(string message, string _, LogType type) =>
+                refused |= type == LogType.Error && TakeoverStates.RefusedCoroutine(message);
+            Application.logMessageReceived += Refused;
             try {
                 fsm.SetState(snapshot.CurrentState);
             } catch (Exception e) {
                 Logger.Debug($"Entering {snapshot.CurrentState} of {Object.Host.name} while inactive threw: {e.Message}");
+                (enterAgain ??= []).Add(fsmIndex);
+            } finally {
+                Application.logMessageReceived -= Refused;
+            }
+
+            if (refused && TakeoverStates.EntersRefusedAgain() && enterAgain?.Contains(fsmIndex) != true) {
+                Logger.Debug($"Entering {snapshot.CurrentState} of {Object.Host.name} while inactive refused a coroutine");
                 (enterAgain ??= []).Add(fsmIndex);
             }
 
@@ -1452,15 +1519,7 @@ internal class Entity {
             fsm.Fsm.Started = true;
         }
 
-        // We need to set the isKinematic property of rigid bodies to ensure physics work again after enabling
-        // the host object. In Hornet 1 this is necessary because another state sets this property normally in the
-        // fight. See the "Wake" or "Refight Ready" state of the "Control" FSM on Hornet 1.
-        // For the Mantis Lord and City Elevator entity, this should never be disabled, since they are always kinematic.
-        var rigidBody = Object.Host.GetComponent<Rigidbody2D>();
-        if (rigidBody != null) {
-            //Logger.Debug("  Resetting isKinematic of Rigidbody to ensure physics work for host object");
-            rigidBody.isKinematic = false;
-        }
+        if (!bodyFirst) SetBody();
 
         _isControlled = false;
 
@@ -1738,6 +1797,66 @@ internal class Entity {
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static bool PlaysStartleSound() => true;
 
+    /// <summary>(coop) Whether entities share one hook on each game-wide method (Animated). Not inlined: shared_hooks'
+    /// twin skips it, and each entity made after then hooks the three methods itself, as before.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool SharesHooks() => true;
+
+    private static readonly MethodInfo PlayMethod = typeof(tk2dSpriteAnimator).GetMethod(
+        nameof(tk2dSpriteAnimator.Play), [typeof(tk2dSpriteAnimationClip), typeof(float), typeof(float)])!;
+
+    private static readonly MethodInfo RecycleMethod = typeof(ObjectPool).GetMethod(nameof(ObjectPool.Recycle),
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static, null,
+        [typeof(GameObject)], null)!;
+
+    private static readonly MethodInfo ActivateMethod = typeof(ActivateGameObject).GetMethod(
+        nameof(ActivateGameObject.OnEnter), BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    /// <summary>(coop) Keys by reference: Unity's Equals calls any two destroyed objects equal, and asks the engine.</summary>
+    private sealed class ByReference<T> : IEqualityComparer<T> where T : class {
+        public static readonly ByReference<T> Instance = new();
+        public bool Equals(T? x, T? y) => ReferenceEquals(x, y);
+        public int GetHashCode(T obj) => RuntimeHelpers.GetHashCode(obj);
+    }
+
+    /// <summary>(coop) The three shared hooks, once (SharesHooks).</summary>
+    private static void MakeSharedHooks() {
+        _sharedPlayHook ??= new Hook(PlayMethod, SharedAnimationPlayed);
+        _sharedRecycleHook ??= new Hook(RecycleMethod, SharedRecycle);
+        _sharedActivateHook ??= new Hook(ActivateMethod, SharedActivate);
+    }
+
+    /// <summary>(coop) Takes this entity's key out of a shared hook's map, unless another entity has it now.</summary>
+    private void Forget<TKey>(Dictionary<TKey, Entity> map, TKey? key) where TKey : class {
+        if (key is not null && map.TryGetValue(key, out var entity) && ReferenceEquals(entity, this)) map.Remove(key);
+    }
+
+    private static void SharedAnimationPlayed(Action<tk2dSpriteAnimator, tk2dSpriteAnimationClip, float, float> orig,
+        tk2dSpriteAnimator self, tk2dSpriteAnimationClip clip, float clipStartTime, float overrideFps) {
+        if (Animated.Count > 0 && self is not null && Animated.TryGetValue(self, out var entity)) {
+            entity.OnAnimationPlayed(orig, self, clip, clipStartTime, overrideFps);
+        } else {
+            orig(self!, clip, clipStartTime, overrideFps);
+        }
+    }
+
+    private static void SharedRecycle(Action<GameObject> orig, GameObject obj) {
+        if (CopyObjects.Count > 0 && obj is not null && CopyObjects.TryGetValue(obj, out var entity)) {
+            entity.ObjectPoolOnRecycleGameObject(orig, obj);
+        } else {
+            orig(obj!);
+        }
+    }
+
+    private static void SharedActivate(Action<ActivateGameObject> orig, ActivateGameObject self) {
+        if (HeldHosts.Count > 0 && self.Fsm?.GetOwnerDefaultTarget(self.gameObject) is { } target &&
+            HeldHosts.TryGetValue(target, out var entity)) {
+            entity.OnDoActivateGameObject(orig, self);
+        } else {
+            orig(self);
+        }
+    }
+
     /// <summary>(coop) The copy's walker plays its own alert where it stands (StartleSound).</summary>
     private void PlayStartle() {
         var walker = _animator.Client != null ? _animator.Client.GetComponent<WalkerV2>() : null;
@@ -1825,9 +1944,11 @@ internal class Entity {
     /// </summary>
     /// <param name="entityNetworkData">A list of data to update the client entity with.</param>
     /// <param name="alreadyInSceneUpdate">Whether this data is from an already in scene update.</param>
+    /// <param name="late">(coop) Whether the data waited seconds for this entity: its followed throws are left out
+    /// (LateSpawns).</param>
     /// <returns>(coop) The index the data stopped at for the next frame, with a death still to come
     /// (DeathOrder.WaitsForBox); -1 when all was applied.</returns>
-    public int UpdateData(List<EntityNetworkData> entityNetworkData, bool alreadyInSceneUpdate) {
+    public int UpdateData(List<EntityNetworkData> entityNetworkData, bool alreadyInSceneUpdate, bool late = false) {
         var death = entityNetworkData.FindIndex(d => d.Type == EntityComponentType.Death);
         var lastBox = death < 0
             ? -1
@@ -1930,6 +2051,12 @@ internal class Entity {
                 //Logger.Info(
                 //    $"Received entity network data for FSM: {fsm.Fsm.Name}, {state.Name}, {actionIndex} ({action.GetType()})"
                 //);
+
+                // (coop) a throw it spawned seconds ago has ended or moved on in the scene host's game; one still out
+                // comes back at its place from the next thrown update. Anything else still plays (LateSpawns). The scene
+                // host's number comes after the spawn's place and rotation (6 floats)
+                if (action is SpawnObjectFromGlobalPool &&
+                    LateSpawns.Skips(late, data.Packet.PeekByte(6 * sizeof(float)), Thrown != null)) continue;
 
                 EntityFsmActions.ApplyNetworkDataFromAction(data, action);
                 KeepCopyStill();
@@ -2121,6 +2248,10 @@ internal class Entity {
 
         _objectPoolRecycleHook?.Dispose();
         _objectPoolRecycleHook = null;
+        Forget(Animated, _animator?.Host);
+        Forget(Animated, _animator?.Client);
+        Forget(CopyObjects, Object.Client);
+        Forget(HeldHosts, Object.Host);  // also one destroyed before its scene host was known (its own hook stayed on)
 
         foreach (var component in _components.Values.Distinct()) {
             component.Destroy();

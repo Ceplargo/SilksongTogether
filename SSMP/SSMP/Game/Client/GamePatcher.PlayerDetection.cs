@@ -390,24 +390,21 @@ internal partial class GamePatcher {
         }
 
         if (!AlertColliderCache.TryGetValue(alertRange, out var cached)) {
-            cached = new CachedCollider { Collider = alertRange.GetComponent<Collider2D>() };
+            var rangeColliders = alertRange.GetComponents<Collider2D>();
+            cached = new CachedCollider { Colliders = rangeColliders, Bounds = new Bounds[rangeColliders.Length] };
             AlertColliderCache.Add(alertRange, cached);
-        }
-
-        var alertCollider = cached.Collider;
-        if (alertCollider == null || !alertCollider.enabled) {
-            return false;
         }
 
         var currentFrame = Time.frameCount;
 
-        // Cache alert collider bounds per frame
+        // Cache alert collider bounds per frame; an off collider keeps empty bounds
         if (cached.FrameCount != currentFrame) {
             cached.FrameCount = currentFrame;
-            cached.Bounds = alertCollider.bounds;
+            for (var i = 0; i < cached.Colliders.Length; i++) {
+                var rangeCollider = cached.Colliders[i];
+                cached.Bounds[i] = rangeCollider != null && rangeCollider.enabled ? rangeCollider.bounds : default;
+            }
         }
-
-        var alertBounds = cached.Bounds;
 
         // Retrieve or create cached player info
         if (!PlayerInfoCache.TryGetValue(player, out var playerInfo)) {
@@ -435,28 +432,46 @@ internal partial class GamePatcher {
             }
         }
 
-        // Check collider intersections using cached bounds in 2D
-        foreach (var playerBounds in playerInfo.ColliderBounds) {
-            if (playerBounds.extents is { x: 0f, y: 0f }) {
+        // (coop) Every collider on the range, as the game's own trigger test sees the local hero: Crawl_07's Crypt Worm's
+        // Ambush Range has two and its first is off, so reading the first alone never saw the other player (0.3.23)
+        var count = ReadsEveryRangeCollider() ? cached.Colliders.Length : Mathf.Min(1, cached.Colliders.Length);
+        for (var i = 0; i < count; i++) {
+            var alertBounds = cached.Bounds[i];
+            if (alertBounds.extents is { x: 0f, y: 0f }) {
                 continue;
             }
 
-            // 2D box intersection check (ignores Z)
-            if (alertBounds.min.x <= playerBounds.max.x && alertBounds.max.x >= playerBounds.min.x &&
-                alertBounds.min.y <= playerBounds.max.y && alertBounds.max.y >= playerBounds.min.y) {
+            // Check collider intersections using cached bounds in 2D
+            foreach (var playerBounds in playerInfo.ColliderBounds) {
+                if (playerBounds.extents is { x: 0f, y: 0f }) {
+                    continue;
+                }
+
+                // 2D box intersection check (ignores Z)
+                if (alertBounds.min.x <= playerBounds.max.x && alertBounds.max.x >= playerBounds.min.x &&
+                    alertBounds.min.y <= playerBounds.max.y && alertBounds.max.y >= playerBounds.min.y) {
+                    return true;
+                }
+            }
+
+            // Fallback check (only if player position is inside the alert bounds in 2D)
+            var playerPos = playerInfo.Position;
+            if (playerPos.x >= alertBounds.min.x && playerPos.x <= alertBounds.max.x &&
+                playerPos.y >= alertBounds.min.y && playerPos.y <= alertBounds.max.y &&
+                cached.Colliders[i].OverlapPoint(playerPos)) {
                 return true;
             }
         }
 
-        // Fallback check (only if player position is inside the alert bounds in 2D)
-        var playerPos = playerInfo.Position;
-        if (playerPos.x >= alertBounds.min.x && playerPos.x <= alertBounds.max.x &&
-            playerPos.y >= alertBounds.min.y && playerPos.y <= alertBounds.max.y) {
-            return alertCollider.OverlapPoint(playerPos);
-        }
-
         return false;
     }
+
+    /// <summary>
+    /// (coop) The switch ambush_other's twin turns off (a skipped bool method returns false): the range test then reads
+    /// the range's first collider only, as before 0.3.23.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool ReadsEveryRangeCollider() => true;
 
     /// <summary>
     /// Gets the best available target position for sight checks.
@@ -570,9 +585,9 @@ internal class BoxedBool {
 /// </summary>
 internal class CachedCollider {
     /// <summary>
-    /// The cached Collider2D reference, which may be null if none is attached.
+    /// The range's Collider2Ds in order (none if it has none).
     /// </summary>
-    public Collider2D? Collider;
+    public Collider2D[] Colliders = [];
 
     /// <summary>
     /// The frame number when the bounds were last updated.
@@ -580,9 +595,9 @@ internal class CachedCollider {
     public int FrameCount = -1;
 
     /// <summary>
-    /// The cached bounds of the collider.
+    /// The cached bounds of each collider this frame; empty for one that is off.
     /// </summary>
-    public Bounds Bounds;
+    public Bounds[] Bounds = [];
 }
 
 /// <summary>

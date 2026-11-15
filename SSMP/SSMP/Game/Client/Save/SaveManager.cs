@@ -130,6 +130,11 @@ internal class SaveManager {
     private bool _putBack;
 
     /// <summary>
+    /// Whether the join's snapshot is being applied (0.3.23 K8: its refreshes are a load's).
+    /// </summary>
+    private bool _joining;
+
+    /// <summary>
     /// (coop) The hook that skips the game's own save in a friend's game (<see cref="SaveGameUnlessFriend"/>).
     /// </summary>
     private Hook? _saveGameHook;
@@ -580,9 +585,12 @@ internal class SaveManager {
                     fsmBool.Value = value;
                     // (coop, 0.3.21) a break from another game breaks the live object its own way (ArrivedBreaks)
                     var state = fsm.Fsm?.ActiveState;
-                    if (state != null && ArrivedBreaks.Sends(fsm.gameObject.name, value, before, state.Transitions.Select(t => t.EventName))) {
-                        Logger.Info($"Arrived break sent to {fsm.gameObject.name}'s {fsm.FsmName} in {state.Name}");
-                        fsm.SendEvent("BREAK");
+                    var arrived = state == null ? null : ArrivedBreaks.Of(fsm.gameObject.name, fsm.FsmName, value, before,
+                        state.Transitions.Select(t => t.EventName).ToList());
+                    if (arrived is { } how) {
+                        Logger.Info($"Arrived break sent to {fsm.gameObject.name}'s {fsm.FsmName} in {state!.Name}: {how.Event ?? how.State}");
+                        if (how.Event != null) fsm.SendEvent(how.Event);
+                        else fsm.SetState(how.State);
                     }
                 };
             }
@@ -1414,11 +1422,17 @@ internal class SaveManager {
 
         // (0.3.22) One value that can't be applied is skipped, not the whole join (SaveSyncRules.ApplyEach)
         // and logged as an error: CoopQA's error log keeps only Error and Fatal, so a Warn would pass every check unseen
-        SaveSyncRules.ApplyEach(
-            currentSave.SaveData,
-            UpdateSaveWithData,
-            (index, e) => Logger.Error($"Could not apply save data with index {index}, skipping:\n{e}")
-        );
+        // (0.3.23 K8) the snapshot's values are a load: their refreshes are a load's (SaveChanges.Refreshes)
+        _joining = true;
+        try {
+            SaveSyncRules.ApplyEach(
+                currentSave.SaveData,
+                UpdateSaveWithData,
+                (index, e) => Logger.Error($"Could not apply save data with index {index}, skipping:\n{e}")
+            );
+        } finally {
+            _joining = false;
+        }
     }
 
     /// <summary>
@@ -1572,7 +1586,7 @@ internal class SaveManager {
                 }
             }
 
-            _saveChanges.ApplyPlayerDataSaveChange(name, own, decodedObject);
+            _saveChanges.ApplyPlayerDataSaveChange(name, own, decodedObject, _joining);
         }
 
         if (SaveDataMapping.GeoRockIndices.TryGetValue(index, out var itemData)) {

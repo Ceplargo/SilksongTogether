@@ -223,4 +223,17 @@ public class BossCatalogTests {
         Assert.Equal("Enter Pause", follow!.State);
         Assert.Equal(["Idle", "Wait For Bench Break"], follow.From.Split('|'));
     }
+
+    [Fact]
+    public void The_Phantoms_room_ends_for_a_player_whose_Boss_Scene_never_started() {
+        // (coop) a friend who quits during her fight and joins again loads Organ_01 with its Boss Scene in Init (her
+        // fight's start is long past) and Battle Gate (1) in Double Close from the load; the host's win reached End,
+        // whose BG OPEN opened both gates, but the friend's never left Init, so Battle Gate (1) stayed shut there
+        // (0.3.23 world Task 16, K4: phgates-p4)
+        var shipped = BossCatalog.Load(File.ReadAllText(Path.Combine("..", "..", "..", "..", "BossRule", "bosses.json")));
+        var end = shipped.Single(b => b.Flag == "defeatedPhantom").End;
+        Assert.NotNull(end);
+        Assert.Equal(("Boss Scene", "Control", "End"), (end!.Object, end.Fsm, end.State));
+        Assert.Equal(["Init"], end.From);
+    }
 }

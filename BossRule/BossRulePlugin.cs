@@ -19,7 +19,7 @@ public class BossRulePlugin : BaseUnityPlugin {
     /// server refuses a friend whose version differs, since synced values travel as positions in a list built into
     /// the mod.
     /// </summary>
-    internal const string Version = "0.3.22";
+    internal const string Version = "0.3.23";
 
     private BossRuleClientAddon? _client;
 
@@ -107,6 +107,7 @@ public class BossRulePlugin : BaseUnityPlugin {
     }
 
     private void Update() {
+        MultiHits.Frames.Add(UnityEngine.Time.unscaledTime, UnityEngine.Time.unscaledDeltaTime); // (coop, 0.3.23) a catch's freeze
         _client?.Tick();
         if (_client?.Connected == true) CaravanRespawn.Tick();
         Marks.Tick(_client?.Connected == true);

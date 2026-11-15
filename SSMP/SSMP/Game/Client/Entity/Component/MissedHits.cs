@@ -55,8 +55,21 @@ internal sealed class MissedHits {
     /// </summary>
     public List<float> Due(double now, bool atOnce = false) => DueHits(now, atOnce).Select(h => h.Stun).ToList();
 
-    /// <summary>As Due, each with its hit's kind (HitKind).</summary>
-    public List<(float Stun, int Kind)> DueHits(double now, bool atOnce = false) {
+    /// <summary>As Due, each with its hit's kind (HitKind). With no hit waiting (most frames) the shared empty list, which
+    /// callers only read: each entity asks every frame (SkipsEmptyDues).</summary>
+    public List<(float Stun, int Kind)> DueHits(double now, bool atOnce = false) =>
+        _landed.Count == 0 && _shown.Count == 0 && SkipsEmptyDues() ? NoHits : TakeDue(now, atOnce);
+
+    // shared by every enemy: callers must not change it
+    private static readonly List<(float Stun, int Kind)> NoHits = [];
+
+    /// <summary>(coop) Whether DueHits skips its work with no hit waiting (optimization: allocation by part, mini PC job
+    /// 25). Not inlined: the twin skips it, and each entity's ask builds its list and closures every frame again.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static bool SkipsEmptyDues() => true;
+
+    // its own method: the closures over now and atOnce are made where the method starts, so DueHits' check comes first
+    private List<(float Stun, int Kind)> TakeDue(double now, bool atOnce) {
         _shown.RemoveAll(t => now - t > Window);
         var due = _landed.Where(l => atOnce || now - l.At > Window).Select(l => (l.Stun, l.Kind)).ToList();
         _landed.RemoveAll(l => atOnce || now - l.At > Window);

@@ -19,7 +19,15 @@ namespace BossRule;
 /// </summary>
 internal static class FreeStarts {
     public const string Prefix = "Free Trap:";
+
+    /// <summary>(0.3.23) The room's fight is on in the sending game, told again every second for a game coming in.</summary>
+    public const string RunningPrefix = "Free Trap Running:";
+
     private const float LookEvery = 0.5f;
+    private const float ResendEvery = 1f;
+
+    /// <summary>The start's actions a late game leaves out: her title, and her roar's emitter (its hero's roar lock).</summary>
+    private static readonly string[] LateOff = ["DisplayBossTitle", "StartRoarEmitter"];
 
     /// <summary>Sends a state for this room's fight to the room's other players; set by the client add-on.</summary>
     public static Action<string>? Send;
@@ -29,7 +37,10 @@ internal static class FreeStarts {
     private static PlayMakerFSM?[] _fsms = [];
     private static string?[] _last = [];
     private static bool[] _echoed = [];
-    private static float _nextLook;
+    private static bool[] _freed = [];
+    private static PlayMakerFSM? _fight;
+    private static bool _late;
+    private static float _nextLook, _nextResend;
 
     /// <summary>Every frame: this room's traps, and whether this game's own player just freed one.</summary>
     public static void Tick() {
@@ -40,6 +51,9 @@ internal static class FreeStarts {
             _fsms = new PlayMakerFSM?[_traps.Length];
             _last = new string?[_traps.Length];
             _echoed = new bool[_traps.Length];
+            _freed = new bool[_traps.Length];
+            _fight = null;
+            _late = false;
         }
 
         var look = false;
@@ -56,7 +70,52 @@ internal static class FreeStarts {
 
             var now = _fsms[i]!.ActiveStateName;
             if (FreeTraps.Sends(_last[i], now, _traps[i].Freed, _echoed[i])) Send?.Invoke(Prefix + _traps[i].Trap);
+            if (now == _traps[i].Freed && !_freed[i]) {
+                _freed[i] = true;
+                _nextResend = Time.unscaledTime + ResendEvery; // after the start's own word, which tells the room first
+            }
             _last[i] = now;
+        }
+
+        // (0.3.23) the fight is on here: told again every second, for a player who comes into the room later
+        if (_freed.Any(f => f) && Time.unscaledTime >= _nextResend && FreeTraps.FightOn(scene) is { } on) {
+            _nextResend = Time.unscaledTime + ResendEvery;
+            if (_fight == null) _fight = Find(on.Object, on.Fsm);
+            if (FreeTraps.Resends(true, _fight?.ActiveStateName, on.State) && ResendsRunning()) Send?.Invoke(RunningPrefix + scene);
+        }
+    }
+
+    /// <summary>The switch bellbeast_join's twin skips (false: the fight-on word is never sent again).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool ResendsRunning() => true;
+
+    /// <summary>
+    /// (0.3.23) Another game's fight in this room is on, and this game came in after its start: this game's trap that still
+    /// waits starts the game's own way (Return Battle's ENTER: her gates shut), once, without her title, which the
+    /// players in the room saw at the fight's start (a friend joining mid-fight saw her gates open, and her title when it
+    /// walked on into her Return trigger).
+    /// </summary>
+    public static void Late(string scene) {
+        if (scene != _scene || _late || GameManager.SilentInstance?.sceneName != scene) return;
+        for (var i = 0; i < _traps.Length; i++) {
+            var fsm = _fsms[i] ?? Find(_traps[i].Trap, _traps[i].Fsm);
+            var state = fsm?.Fsm?.ActiveState;
+            if (fsm == null || state == null ||
+                !FreeTraps.LateStarts(fsm.ActiveStateName, _traps[i].Freed, _traps[i].Event, state.Transitions.Select(t => t.EventName))) {
+                continue;
+            }
+
+            _late = true;
+            _echoed[i] = true;
+            // her title and her roar, which stuns this game's hero, belong to the start the room saw: off in every FSM
+            // under the trap (her first path's Beast Anim, a child of the vines, runs both in its Roar)
+            var off = fsm.gameObject.GetComponentsInChildren<PlayMakerFSM>(true)
+                .SelectMany(f => f.FsmStates).SelectMany(s => s.Actions).Where(a => LateOff.Contains(a.GetType().Name)).ToList();
+            foreach (var action in off) action.Enabled = false;
+
+            Debug.Log($"[BossRule] Late start: {_traps[i].Trap}'s {_traps[i].Event} in {state.Name}, {off.Count} title and roar actions off ({scene})");
+            fsm.SendEvent(_traps[i].Event);
+            return;
         }
     }
 

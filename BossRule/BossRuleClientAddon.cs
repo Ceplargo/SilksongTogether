@@ -98,7 +98,8 @@ internal class BossRuleClientAddon : ClientAddon {
             s => _cutscenes?.Received(s.Scene, s.Name, s.State, s.Seq));
         GroundBells.Send = DoorBells.Send;
         GroundBells.NotSceneHost = () => _connected && !clientApi.ClientManager.IsSceneHost;
-        MultiHits.Send = DoorBells.Send;
+        // (coop, 0.3.23) stamped as it goes: how long this game was frozen just before (FrameGaps)
+        MultiHits.Send = message => DoorBells.Send(MultiHitPath.Stamp(message, MultiHits.Frozen()));
         MultiHits.NotSceneHost = GroundBells.NotSceneHost;
         MultiHits.SceneHost = () => _connected && clientApi.ClientManager.IsSceneHost;
         MultiHits.Username = () => clientApi.ClientManager.Username;
@@ -142,6 +143,18 @@ internal class BossRuleClientAddon : ClientAddon {
             // the scene host's game started an ordinary arena or one of its waves: this game's follows
             if (packet.State.StartsWith(ArenaWaves.Prefix)) {
                 ArenaWaves.Received(packet.Scene, packet.State.Substring(ArenaWaves.Prefix.Length));
+                return;
+            }
+
+            // (0.3.23) another game's fight in this room is on: a game that came in after its start starts its own
+            if (packet.State.StartsWith(FreeStarts.RunningPrefix)) {
+                FreeStarts.Late(packet.State.Substring(FreeStarts.RunningPrefix.Length));
+                return;
+            }
+
+            // (0.3.23) another game's fight in this room is on: a game that came in after its start starts its own
+            if (packet.State.StartsWith(FreeStarts.RunningPrefix)) {
+                FreeStarts.Late(packet.State.Substring(FreeStarts.RunningPrefix.Length));
                 return;
             }
 

@@ -12,6 +12,7 @@ using SSMP.Hooks;
 using SSMP.Networking.Client;
 using SSMP.Game.Client.Entity;
 using SSMP.Game.Client.Entity.Component;
+using SSMP.Game.Client.Save;
 using SSMP.Util;
 using UnityEngine;
 using Logger = SSMP.Logging.Logger;
@@ -293,7 +294,11 @@ internal partial class GamePatcher {
         AddHook(typeof(BoneSegment), "OnTriggerExit2D", BoneSegmentOnTrigger);
         AddHook(typeof(BouncePod), nameof(BouncePod.Hit), IgnoreRemoteHit<BouncePod>);
         AddHook(typeof(BounceBalloon), nameof(BounceBalloon.Hit), IgnoreRemoteHit<BounceBalloon>);
+        AddHook(typeof(BreakableHolder), nameof(BreakableHolder.Hit), StruckThingOnHit<BreakableHolder>);
+        AddHook(typeof(RosaryCache), nameof(RosaryCache.Hit), StruckThingOnHit<RosaryCache>);
         AddHook(typeof(HitResponse), nameof(HitResponse.Hit), HitResponseOnHit);
+        AddHook(typeof(HitRigidbody2D), nameof(HitRigidbody2D.Hit), HitRigidbody2DOnHit);
+        AddHook(typeof(HeroController), nameof(HeroController.SilkGain), HeroControllerOnSilkGain, Type.EmptyTypes);
         AddHook(
             typeof(NailSlashTerrainThunk),
             nameof(NailSlashTerrainThunk.OnCollisionEnter2D),
@@ -1077,6 +1082,18 @@ internal partial class GamePatcher {
             return;
         }
 
+        // (coop, 0.3.23 K16) a world object's hit on this game's copy: the scene host's game applies it to the original
+        // and its drop comes here (WorldDamage: a Sand Centipede took the Coral Judge's health twice)
+        var world = BlockedHits.World(IsLocalHitSource(hitInstance), IsRemotePlayerSource(hitInstance.Source),
+            hitInstance.IsHeroDamage);
+        if (!WorldDamage.Applies(HealthManagerComponent.FollowsHost(self), world)) {
+            if (HealthManagerComponent.LogsHealth) {
+                Logger.Debug($"(coop) world hit left out: {self.name} from {PathOf(hitInstance.Source)}, frame {Time.frameCount}");
+            }
+
+            return;
+        }
+
         orig(self, hitInstance);
         if (self.hp <= 0 && !self.isDead && HealthManagerComponent.FollowsHost(self)) {
             KillSounds.Seen.Killed(self.GetInstanceID(), Time.unscaledTimeAsDouble);  // it dies on the host's word
@@ -1335,6 +1352,26 @@ internal partial class GamePatcher {
     }
 
     /// <summary>
+    /// (coop, 0.3.23) A struck thing's hit (a BreakableHolder or a RosaryCache: each saves its hit count): a world object's
+    /// hit (an enemy's falling rock) counts only in the game that runs the room, which sends it; here, a following game,
+    /// its own copy of the rock lands its own way (<see cref="PersistentApply.SkipsHit"/>). The hits RosaryHits plays
+    /// for an arriving value strike from the thing itself, so they always count.
+    /// </summary>
+    private IHitResponder.HitResponse StruckThingOnHit<T>(
+        Func<T, HitInstance, IHitResponder.HitResponse> orig,
+        T self,
+        HitInstance damageInstance
+    ) where T : Component, IHitResponder {
+        var world = damageInstance.Source != self.gameObject && BlockedHits.World(
+            IsLocalHitSource(damageInstance), IsRemotePlayerSource(damageInstance.Source), damageInstance.IsHeroDamage
+        );
+        var sceneHost = _entityManagerInstance?.IsSceneHost ?? false;
+        return PersistentApply.SkipsHit(world, sceneHost, !_netClient.IsConnected)
+            ? IHitResponder.Response.None
+            : orig(self, damageInstance);
+    }
+
+    /// <summary>
     /// (coop) Hook for <see cref="HitResponse"/>.<see cref="HitResponse.Hit"/>: a remote player's hit on the local
     /// player's cocoon is ignored, since each game's cocoon is its own player's and both lie at the room's corpse
     /// marker (<see cref="PersonalCocoon"/>). Every other object that answers hits this way still takes them.
@@ -1350,6 +1387,53 @@ internal partial class GamePatcher {
         }
 
         return orig(self, damageInstance);
+    }
+
+    /// <summary>A silk grub cocoon's drop item, unset while a remote player's hit runs (<see cref="GrubCocoonHits"/>).</summary>
+    private static readonly AccessTools.FieldRef<SilkGrubCocoon, CollectableItem> GrubDropRef =
+        AccessTools.FieldRefAccess<SilkGrubCocoon, CollectableItem>("dropItem");
+
+    /// <summary>Whether a remote player's hit on a silk grub cocoon is running here (its silk is not this hero's).</summary>
+    private static bool _remoteGrubHit;
+
+    /// <summary>
+    /// (coop, 0.3.23 world Task 13) Hook for <see cref="HitRigidbody2D"/>.<see cref="HitRigidbody2D.Hit"/>, which answers
+    /// a silk grub cocoon's hits (its OnHit calls <see cref="SilkGrubCocoon.WasHit"/> in the same call): a remote
+    /// player's hit still plays here (its sway, effects, and its break), but with the cocoon's drop item unset and
+    /// <see cref="HeroController.SilkGain()"/> skipped, so the grub drops and the silk comes only in the hitter's game
+    /// (<see cref="GrubCocoonHits"/>). Every other body takes its hits as before.
+    /// </summary>
+    private IHitResponder.HitResponse HitRigidbody2DOnHit(
+        Func<HitRigidbody2D, HitInstance, IHitResponder.HitResponse> orig,
+        HitRigidbody2D self,
+        HitInstance damageInstance
+    ) {
+        if (!GrubCocoonHits.KeepsOwn(RemoteAttackComponent.IsRemoteAttack(damageInstance.Source)) ||
+            self.GetComponentInParent<SilkGrubCocoon>() is not { } grub) {
+            return orig(self, damageInstance);
+        }
+
+        var drop = GrubDropRef(grub);
+        GrubDropRef(grub) = null!;
+        _remoteGrubHit = true;
+        try {
+            return orig(self, damageInstance);
+        } finally {
+            _remoteGrubHit = false;
+            GrubDropRef(grub) = drop;
+        }
+    }
+
+    /// <summary>
+    /// (coop, 0.3.23 world Task 13) Hook for <see cref="HeroController.SilkGain()"/>: skipped while a remote player's hit
+    /// on a silk grub cocoon runs (<see cref="HitRigidbody2DOnHit"/>), since that silk is the hitter's.
+    /// </summary>
+    private void HeroControllerOnSilkGain(Action<HeroController> orig, HeroController self) {
+        if (_remoteGrubHit) {
+            return;
+        }
+
+        orig(self);
     }
 
     /// <summary>
