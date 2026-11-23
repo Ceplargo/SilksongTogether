@@ -255,11 +255,17 @@ internal class DtlsClient {
     /// Continuously tries to receive data from the DTLS transport until cancellation is requested.
     /// </summary>
     private void DtlsReceiveLoop(CancellationToken cancellationToken) {
+        // (coop, optimization fix E) one buffer for every wait, and a copy of the datagram's own length only when one
+        // came: a new 1400-byte buffer each 5 ms wait was about 290 a second in each game, data or not (mini PC job
+        // 42). The wait is the server's 100 ms: the queue's take returns as soon as a datagram comes, and a close
+        // cancels it
+        var buffer = new byte[MaxPacketSize];
         while (!cancellationToken.IsCancellationRequested && DtlsTransport != null) {
-            var buffer = new byte[MaxPacketSize];
-            var length = DtlsTransport.Receive(buffer, 0, buffer.Length, 5);
+            var length = DtlsTransport.Receive(buffer, 0, buffer.Length, 100);
             if (length >= 0) {
-                DataReceivedEvent?.Invoke(buffer, length);
+                var packet = new byte[length];
+                Array.Copy(buffer, 0, packet, 0, length);
+                DataReceivedEvent?.Invoke(packet, length);
             }
         }
     }

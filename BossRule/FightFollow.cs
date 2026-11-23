@@ -55,7 +55,7 @@ internal static class FightFollow {
             if (_fight == null) {
                 if (Time.unscaledTime < _nextLook) return;
                 _nextLook = Time.unscaledTime + 1f;
-                _fight = Object.FindObjectsByType<PlayMakerFSM>(FindObjectsSortMode.None)
+                _fight = RoomScan.All<PlayMakerFSM>()
                     .FirstOrDefault(f => f.name == GreetingRule.Npc && f.FsmName == FightRule.Fsm);
                 if (_fight == null) return;
             }

@@ -90,4 +90,14 @@ internal static class PersistentApply {
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     public static bool SkipsHit(bool world, bool sceneHost, bool alone) => world && !sceneHost && !alone;
+
+    /// <summary>
+    /// (0.4) Whether an arriving break for a Breakable (a plank wall, a spool) breaks the live object here, with the
+    /// game's own Breakable.BreakSelf: a live, unbroken one. Setting its isBroken flag alone left Greymoor_16's plank
+    /// wall standing with its Hero Solid in the host's game when the friend broke it and the copy of its swings missed
+    /// (NOTES 515, run 2026-11-15_231644-pair3). False is the old rule (the flag alone), so CoopQA skip switches it off
+    /// (breakable_arrives' twin). One not live here takes the flag, which the room's load reads.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    public static bool ForBreakable(bool arriving, bool broken, bool live) => arriving && !broken && live;
 }

@@ -5,6 +5,7 @@ using HutongGames.PlayMaker.Actions;
 using SSMP.Networking.Packet.Data;
 using SSMP.Util;
 using UnityEngine;
+using Logger = SSMP.Logging.Logger;
 
 // ReSharper disable UnusedMember.Local
 // ReSharper disable UnusedParameter.Local
@@ -619,11 +620,78 @@ internal static partial class EntityFsmActions {
             return false;
         }
 
-        return !IsObjectInRegistry(gameObject);
+        if (IsObjectInRegistry(gameObject)) {
+            return false;
+        }
+
+        // (coop, 0.4 enemies) a switch-on of a hurt box: the body's place and facing now (BlastSettle)
+        var body = action.Fsm.GameObject;
+        var flag = BlastSettle.Flag(action.activate.Value && body != null,
+            body != null && action.activate.Value && HasHurtBox(gameObject),
+            body != null ? body.transform.lossyScale.x : 1f);
+        data.Packet.Write(flag);
+        if (BlastSettle.HasPlace(flag)) {
+            var place = body!.transform.position;
+            data.Packet.Write(place.x);
+            data.Packet.Write(place.y);
+        }
+
+        return true;
+    }
+
+    /// <summary>(coop, 0.4 enemies) Whether each object an activation switched on has a hurt box in it, found once per
+    /// object (held weakly, so a room's objects go with it).</summary>
+    private static readonly ConditionalWeakTable<GameObject, object> HurtBoxes = new();
+
+    private static bool HasHurtBox(GameObject gameObject) {
+        if (HurtBoxes.TryGetValue(gameObject, out var known)) return (bool) known;
+        var has = gameObject.GetComponentInChildren<DamageHero>(true) != null;
+        HurtBoxes.Add(gameObject, has);
+        return has;
+    }
+
+    /// <summary>(coop, 0.4 enemies) Settles so far in this game (print only: the proof runs read them).</summary>
+    private static int _settles;
+
+    /// <summary>(coop, 0.4 enemies) The copy's body posed at the scene host's place and facing at his activation only
+    /// while the object is switched on (BlastSettle), then put back as its own updates left it. A switched-on object
+    /// that keeps its world place (DeactivateAfterDelay's stayInPlace: the Thrower's Explosion) is held where it came on,
+    /// as its own Update holds it from the next frame.</summary>
+    private static void PosedSwitch(GameObject body, GameObject target, float x, float y, float sign, System.Action switchOn) {
+        var transform = body.transform;
+        var scale = transform.localScale;
+        var turned = (transform.lossyScale.x < 0 ? -1f : 1f) != sign;
+        (Vector3 place, Vector3 scale) own = (transform.position, scale);
+        (Vector3 place, Vector3 scale) sent = (new Vector3(x, y, own.place.z),
+            turned ? new Vector3(-scale.x, scale.y, scale.z) : scale);
+        var wasOn = target.activeInHierarchy;  // on already: no OnEnable, it keeps the place it had
+        var cameOn = Vector3.zero;
+        BlastSettle.PosedFor(own, sent, pose => {
+            transform.position = pose.place;
+            transform.localScale = pose.scale;
+        }, () => {
+            switchOn();
+            cameOn = target.transform.position;
+        });
+        if (!wasOn && target.activeInHierarchy && target.TryGetComponent<DeactivateAfterDelay>(out var delay) && delay.stayInPlace) {
+            target.transform.position = cameOn;
+        }
+
+        // print only (the proof runs read them)
+        Logger.Info($"(coop) settled {body.name} for {target.name}: settle {++_settles}, " +
+                    $"snap {(own.place - sent.place).magnitude:F2}" + (turned ? ", turned" : "") + $", frame {Time.frameCount}");
     }
 
     /// <summary>Applies network data to the FSM action.</summary>
-    private static void ApplyNetworkDataFromAction(EntityNetworkData data, ActivateGameObject action) {
+    private static void ApplyNetworkDataFromAction(EntityNetworkData? data, ActivateGameObject action) {
+        // (coop, 0.4 enemies) read first: written with every replay sent (BlastSettle)
+        var flag = data == null ? BlastSettle.NoPlace : data.Packet.ReadByte();
+        float x = 0f, y = 0f;
+        if (BlastSettle.HasPlace(flag)) {
+            x = data!.Packet.ReadFloat();
+            y = data.Packet.ReadFloat();
+        }
+
         var gameObject = action.Fsm.GetOwnerDefaultTarget(action.gameObject);
         if (gameObject == null) {
             return;
@@ -637,10 +705,19 @@ internal static partial class EntityFsmActions {
             }
         }
 
-        if (action.recursive.Value) {
-            SetActiveRecursively(gameObject, action.activate.Value);
+        void SwitchOn() {
+            if (action.recursive.Value) {
+                SetActiveRecursively(gameObject, action.activate.Value);
+            } else {
+                gameObject.SetActive(action.activate.Value);
+            }
+        }
+
+        var body = action.Fsm.GameObject;
+        if (BlastSettle.HasPlace(flag) && body != null) {
+            PosedSwitch(body, gameObject, x, y, BlastSettle.Sign(flag), SwitchOn);
         } else {
-            gameObject.SetActive(action.activate.Value);
+            SwitchOn();
         }
 
         // As the action does when its state ends: the object goes back once the scene host's FSM leaves the state

@@ -53,6 +53,13 @@ public class DialogueShareTests {
         Assert.Equal(note, DialogueShare.Decode(DialogueShare.Encode(note)));
     }
 
+    // (0.4 World B) a rosary set taken from a saved world pickup, sent to the other games (Ant_04_left, NOTES 575)
+    [Fact]
+    public void A_taken_note_round_trips_exactly() {
+        var note = new TakenNote("Bob|x", "Rosary_Set_Medium", "Ant_04_left");
+        Assert.Equal(note, DialogueShare.Decode(DialogueShare.Encode(note)));
+    }
+
     private static QuestNote Quest(string scene = "Bone_04", float x = 10f, float y = 5f) =>
         new("Ann", "Shiny Bell Goomba", false, scene, x, y);
 

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using SSMP.Math;
+using SSMP.Util;
 
 namespace SSMP.Networking.Packet.Data;
 
@@ -16,7 +17,7 @@ internal class PlayerUpdate : GenericClientData {
     /// <summary>
     /// Set containing the update types that this packet contains.
     /// </summary>
-    public HashSet<PlayerUpdateType> UpdateTypes { get; }
+    public EnumSet<PlayerUpdateType> UpdateTypes { get; }
 
     /// <summary>
     /// The position of the player.
@@ -42,7 +43,7 @@ internal class PlayerUpdate : GenericClientData {
     /// Construct the player update data.
     /// </summary>
     public PlayerUpdate() {
-        UpdateTypes = new HashSet<PlayerUpdateType>();
+        UpdateTypes = new EnumSet<PlayerUpdateType>();
         AnimationInfos = new List<AnimationInfo>();
 
         IsReliable = false;

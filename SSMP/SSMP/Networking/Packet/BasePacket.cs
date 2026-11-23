@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using SSMP.Logging;
+using SSMP.Util;
 
 namespace SSMP.Networking.Packet;
 
@@ -65,7 +66,7 @@ internal abstract class BasePacket<TPacketId> where TPacketId : Enum {
         Packet packet,
         Dictionary<TPacketId, IPacketData> packetData
     ) {
-        var enumValues = (TPacketId[]) Enum.GetValues(typeof(TPacketId));
+        var enumValues = EnumValues<TPacketId>.All;
         var packetIdSize = (byte) enumValues.Length;
 
         return WritePacketData(
@@ -238,7 +239,7 @@ internal abstract class BasePacket<TPacketId> where TPacketId : Enum {
         Dictionary<TPacketId, IPacketData> packetData
     ) {
         // Figure out the size of the packet ID enum
-        var enumValues = (TPacketId[]) Enum.GetValues(typeof(TPacketId));
+        var enumValues = EnumValues<TPacketId>.All;
         var packetIdSize = (byte) enumValues.Length;
 
         // Read the byte flag representing which packets are included in this update
@@ -257,8 +258,7 @@ internal abstract class BasePacket<TPacketId> where TPacketId : Enum {
         // Keep track of value of current bit
         ulong currentTypeValue = 1;
 
-        var packetIdValues = Enum.GetValues(typeof(TPacketId));
-        foreach (TPacketId packetId in packetIdValues) {
+        foreach (var packetId in enumValues) {
             // If this bit was set in our flag, we add the type to the list
             if ((dataPacketIdFlag & currentTypeValue) != 0) {
                 var iPacketData = InstantiatePacketDataFromId(packetId);
@@ -510,6 +510,10 @@ internal abstract class BasePacket<TPacketId> where TPacketId : Enum {
         foreach (var addonIdDataPair in AddonPacketData) {
             CachedAllAddonData.Add(addonIdDataPair.Key, addonIdDataPair.Value);
         }
+
+        // coop: cached, as GetPacketData says (UpdatePacket's own cache sets it too); without it each call built a
+        // fresh copy, so ServerConnectionManager's removal of HeldSaveUpdates never reached the handlers
+        IsAllPacketDataCached = true;
     }
 
     /// <summary>

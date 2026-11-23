@@ -28,6 +28,9 @@ internal class MonoBehaviourUtil : MonoBehaviour {
     /// </summary>
     public event Action? OnFixedUpdateEvent;
 
+    // (coop, optimization fix D) each event's handlers, read again only when one is added or removed
+    private readonly HandlerList _updateHandlers = new(), _fixedUpdateHandlers = new(), _lateUpdateHandlers = new();
+
     public void Awake() {
         if (Instance != null) {
             Destroy(this);
@@ -44,7 +47,7 @@ internal class MonoBehaviourUtil : MonoBehaviour {
 
         // Each handler on its own: a handler that throws would otherwise skip every handler after it that frame, and
         // entity sync shares this event with save sync (a save item that threw every frame froze enemy movement)
-        foreach (var handler in OnUpdateEvent.GetInvocationList()) {
+        foreach (var handler in _updateHandlers.Of(OnUpdateEvent)) {
             try {
                 ((Action) handler)();
             } catch (Exception e) {
@@ -58,7 +61,7 @@ internal class MonoBehaviourUtil : MonoBehaviour {
             return;
         }
 
-        foreach (var handler in OnFixedUpdateEvent.GetInvocationList()) {
+        foreach (var handler in _fixedUpdateHandlers.Of(OnFixedUpdateEvent)) {
             try {
                 ((Action) handler)();
             } catch (Exception e) {
@@ -72,7 +75,7 @@ internal class MonoBehaviourUtil : MonoBehaviour {
             return;
         }
 
-        foreach (var handler in OnLateUpdateEvent.GetInvocationList()) {
+        foreach (var handler in _lateUpdateHandlers.Of(OnLateUpdateEvent)) {
             try {
                 ((Action) handler)();
             } catch (Exception e) {

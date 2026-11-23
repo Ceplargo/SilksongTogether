@@ -30,4 +30,19 @@ public class PerformWakesTests {
         Assert.False(PerformWakes.Echoes(runs: false, state: "State Check", waits: "State Check"));
         Assert.False(PerformWakes.Echoes(runs: true, state: "Wake Antic", waits: "State Check"));
     }
+
+    [Fact]
+    public void Asking_each_frame_allocates_nothing() {
+        // (optimization, fix C) PerformWake asks every frame in every room: 52 MB in 15 minutes of the host's game, 67 of
+        // the friend's (mini PC job 28)
+        PerformWakes.In("Bone_15");
+        PerformWakes.In("Tut_01");
+        var before = System.GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 100; i++) {
+            PerformWakes.In("Tut_01");
+            PerformWakes.In("Bone_15");
+            PerformWakes.In(null);
+        }
+        Assert.Equal(0, System.GC.GetAllocatedBytesForCurrentThread() - before);
+    }
 }

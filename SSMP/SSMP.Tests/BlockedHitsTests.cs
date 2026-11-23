@@ -85,4 +85,15 @@ public class BlockedHitsTests {
     [Fact]
     public void A_landed_hit_replayed_while_the_enemy_takes_hits_plays_as_the_games_hit() =>
         Assert.False(BlockedHits.ReplaysEffectsOnly(false));
+
+    // (0.4) its stun still counts: the game counts a hit's stun only in its own Hit, which effects only never runs
+    // (Bone_16, Belltown_04: the friend's hit's stun 1 lost in the scene host's game)
+    [Fact]
+    public void A_landed_hit_replayed_as_its_effects_only_keeps_its_stun() =>
+        Assert.Equal(1f, BlockedHits.StunOf(true, 1f));
+
+    // a hit played as the game's own counts its stun there, so none is added
+    [Fact]
+    public void A_landed_hit_played_as_the_games_hit_adds_no_stun() =>
+        Assert.Equal(0f, BlockedHits.StunOf(false, 1f));
 }

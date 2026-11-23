@@ -61,32 +61,44 @@ public class DamagePairsTests {
 
     [Fact]
     public void A_late_old_damage_state_gets_a_current_snapshot_even_without_another_attack() {
-        Assert.False(DamagePairs.RefreshDue(1.04f, 1f));
-        Assert.True(DamagePairs.RefreshDue(1.06f, 1f));
+        Assert.False(DamagePairs.RefreshDue(1.04f, 1f, 1f));
+        Assert.True(DamagePairs.RefreshDue(1.06f, 1f, 1f));
     }
 
     [Fact]
     public void A_late_retry_gets_a_fresh_state_before_the_next_tenth_of_a_second() {
         // Recorded retry at .288 s followed a current snapshot at .242 s; waiting until .345 left it active.
-        Assert.True(DamagePairs.RefreshDue(.3f, .242f));
+        Assert.True(DamagePairs.RefreshDue(.3f, .242f, .2f));
     }
 
     [Fact]
     public void Losing_a_refresh_does_not_stop_damage_recovery() {
-        Assert.True(DamagePairs.RefreshDue(1.22f, 1.11f));
-        Assert.True(DamagePairs.RefreshDue(1.33f, 1.22f));
+        Assert.True(DamagePairs.RefreshDue(1.22f, 1.11f, 1f));
+        Assert.True(DamagePairs.RefreshDue(1.33f, 1.22f, 1f));
     }
 
     [Fact]
     public void A_long_frame_sends_current_damage_once_on_resuming() {
-        Assert.True(DamagePairs.RefreshDue(8f, 1f));
-        Assert.False(DamagePairs.RefreshDue(8f, 8f));
+        Assert.True(DamagePairs.RefreshDue(8f, 1f, 1f));
+        Assert.False(DamagePairs.RefreshDue(8f, 8f, 1f));
+    }
+
+    [Fact]
+    public void A_late_retry_within_three_seconds_of_a_change_still_gets_the_fast_refresh() {
+        Assert.True(DamagePairs.RefreshDue(3.96f, 3.9f, 1f));
+    }
+
+    [Fact]
+    public void Damage_that_has_not_changed_for_three_seconds_is_refreshed_once_a_second() {
+        Assert.False(DamagePairs.RefreshDue(4.1f, 4.05f, 1f));
+        Assert.False(DamagePairs.RefreshDue(5.04f, 4.05f, 1f));
+        Assert.True(DamagePairs.RefreshDue(5.06f, 4.05f, 1f));
     }
 
     [Fact]
     public void Unchanged_damage_is_not_sent_every_frame() {
-        Assert.False(DamagePairs.RefreshDue(1.01f, 1f));
-        Assert.False(DamagePairs.RefreshDue(1.02f, 1f));
+        Assert.False(DamagePairs.RefreshDue(1.01f, 1f, 1f));
+        Assert.False(DamagePairs.RefreshDue(1.02f, 1f, 1f));
     }
 
     [Fact]

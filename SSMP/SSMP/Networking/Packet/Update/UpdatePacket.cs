@@ -203,9 +203,18 @@ internal abstract class UpdatePacket<TPacketId> : BasePacket<TPacketId> where TP
     /// Set the reliable packet data contained in the lost packet as resend data in this one.
     /// </summary>
     /// <param name="lostPacket">The update packet instance that was lost.</param>
-    public void SetLostReliableData(UpdatePacket<TPacketId> lostPacket) {
-        // Retrieve the lost packet data
-        var lostPacketData = lostPacket.GetPacketData();
+    /// <param name="arrived">(coop, ResendRules.Flat) Whether the packet sent under a sequence was acked: what the
+    /// lost packet carried for it does not go again.</param>
+    /// <param name="oldThrows">(coop, ResendRules.DropsOldThrows) Whether a newer update of an enemy's thrown
+    /// objects went out after a packet number: that packet's go not again.</param>
+    public void SetLostReliableData(
+        UpdatePacket<TPacketId> lostPacket,
+        Func<ushort, bool>? arrived = null,
+        Func<ushort, ushort, bool>? oldThrows = null
+    ) {
+        // Retrieve the lost packet data: (coop, ResendRules.Flat) its own, not what it carried again
+        var flat = ResendRules.Flat();
+        var lostPacketData = flat ? lostPacket.NormalPacketData : lostPacket.GetPacketData();
 
         // Finally, put the packet data dictionary in the resend dictionary keyed by its sequence number
         var reliablePacketData = CopyReliableDataDict(
@@ -251,10 +260,10 @@ internal abstract class UpdatePacket<TPacketId> : BasePacket<TPacketId> where TP
             }
         }
 
-        _resendPacketData[lostPacket.Sequence] = reliablePacketData;
+        _resendPacketData[lostPacket.Sequence] = WithoutOldThrows(reliablePacketData, lostPacket.Sequence, oldThrows);
 
         // Retrieve the lost addon data
-        var lostAddonData = lostPacket.GetAddonPacketData();
+        var lostAddonData = flat ? lostPacket.AddonPacketData : lostPacket.GetAddonPacketData();
         // Create a new dictionary of addon data in which we store all reliable data from the lost packet
         // for all addons in the dictionary
         var toResendAddonData = new Dictionary<byte, AddonPacketData>();
@@ -277,6 +286,102 @@ internal abstract class UpdatePacket<TPacketId> : BasePacket<TPacketId> where TP
 
         // Put the addon data dictionary in the resend dictionary keyed by its sequence number
         _resendAddonPacketData[lostPacket.Sequence] = toResendAddonData;
+
+        if (!flat) {
+            return;
+        }
+
+        // (coop, ResendRules.Flat) what the lost packet carried again goes again under its own numbers
+        // (another packet in flight that carried it can be judged lost after its ack came, and carry it on again)
+        foreach (var (seq, data) in lostPacket._resendPacketData) {
+            if (arrived?.Invoke(seq) != true) _resendPacketData.TryAdd(seq, WithoutOldThrows(data, seq, oldThrows));
+        }
+
+        foreach (var (seq, data) in lostPacket._resendAddonPacketData) {
+            if (arrived?.Invoke(seq) != true) _resendAddonPacketData.TryAdd(seq, data);
+        }
+    }
+
+    /// <summary>
+    /// (coop, ResendRules.DropsOldThrows) The entities whose thrown objects this packet's own data updates.
+    /// </summary>
+    public IEnumerable<ushort> ThrownEntities() {
+        foreach (var data in NormalPacketData.Values) {
+            if (data is not PacketDataCollection<ReliableEntityUpdate> updates) continue;
+            foreach (var instance in updates.DataInstances) {
+                if (instance is ReliableEntityUpdate { HasThrown: true } update) yield return update.Id;
+            }
+        }
+    }
+
+    /// <summary>
+    /// (coop, ResendRules.DropsOldThrows) A resend's data without the thrown objects a newer update of them
+    /// superseded; the same dictionary when it has none.
+    /// </summary>
+    private static Dictionary<TPacketId, IPacketData> WithoutOldThrows(
+        Dictionary<TPacketId, IPacketData> data,
+        ushort sequence,
+        Func<ushort, ushort, bool>? oldThrows
+    ) {
+        if (oldThrows == null) return data;
+        Dictionary<TPacketId, IPacketData>? kept = null;
+        foreach (var (packetId, packetData) in data) {
+            if (packetData is not PacketDataCollection<ReliableEntityUpdate> updates) continue;
+            var any = false;
+            foreach (var instance in updates.DataInstances) {
+                if (instance is ReliableEntityUpdate { HasThrown: true } u && oldThrows(u.Id, sequence)) {
+                    any = true;
+                    break;
+                }
+            }
+
+            if (!any) continue;
+            var left = new PacketDataCollection<ReliableEntityUpdate>();
+            foreach (var instance in updates.DataInstances) {
+                var update = (ReliableEntityUpdate) instance;
+                if (!update.HasThrown || !oldThrows(update.Id, sequence)) {
+                    left.DataInstances.Add(update);
+                    continue;
+                }
+
+                var copy = update.CloneWithoutSupersededHostFsm(new Dictionary<byte, EntityHostFsmData>(), true);
+                if (copy != null) left.DataInstances.Add(copy);
+            }
+
+            kept ??= new Dictionary<TPacketId, IPacketData>(data);
+            if (left.DataInstances.Count > 0) {
+                kept[packetId] = left;
+            } else {
+                kept.Remove(packetId);
+            }
+        }
+
+        return kept ?? data;
+    }
+
+    /// <summary>
+    /// (coop, ResendRules.Flat) A packet judged lost was acked after all: its data, and what it carried again, need
+    /// not go again.
+    /// </summary>
+    /// <param name="arrived">The packet that was acked late.</param>
+    public void DropArrived(UpdatePacket<TPacketId> arrived) {
+        _resendPacketData.Remove(arrived.Sequence);
+        _resendAddonPacketData.Remove(arrived.Sequence);
+        foreach (var seq in arrived._resendPacketData.Keys) {
+            _resendPacketData.Remove(seq);
+        }
+
+        foreach (var seq in arrived._resendAddonPacketData.Keys) {
+            _resendAddonPacketData.Remove(seq);
+        }
+    }
+
+    /// <summary>
+    /// (coop, ResendRules.Recovers) Take all resends out, for an update too big to send with them.
+    /// </summary>
+    public void DropResendData() {
+        _resendPacketData.Clear();
+        _resendAddonPacketData.Clear();
     }
 
     /// <summary>

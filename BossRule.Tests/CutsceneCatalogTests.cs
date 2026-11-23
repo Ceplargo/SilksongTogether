@@ -10,7 +10,7 @@ public class CutsceneCatalogTests {
     [Fact]
     public void The_shipped_catalog_loads_every_cutscene_with_its_room_fsm_and_start() {
         var entries = CutsceneCatalog.Load(Shipped);
-        Assert.Equal(28, entries.Count);
+        Assert.Equal(30, entries.Count);  // 28 cutscenes, the Bell Beast's heart's memory part and the Widow's (Memory_Needolin) (0.4 world Task 17; no Fourth Chorus heart: the game has no Memory_Silk_Heart_SongGolem)
         Assert.Equal(entries.Count, entries.Select(e => e.Name).Distinct().Count());
         Assert.All(entries, e => Assert.True(e.Scenes.Count > 0 && e.Object != "" && e.Fsm != "" && e.Start.Count > 0, e.Name));
     }
@@ -49,14 +49,32 @@ public class CutsceneCatalogTests {
     [Fact]
     public void The_followed_cutscenes_name_the_state_by_which_a_held_hero_is_given_back() {
         var entries = CutsceneCatalog.Load(Shipped);
-        Assert.Equal(new[] { "churchkeeper_intro", "greymoor_crash", "widow_intro", "shrine_silkspear",
+        Assert.Equal(new[] { "churchkeeper_intro", "greymoor_crash", "widow_intro", "widow_win", "widow_win/memory", "silk_heart_bellbeast",
+                "silk_heart_bellbeast/memory", "shrine_silkspear",
                 "shrine_swift_step", "shrine_silk_charge", "shrine_thread_storm", "shrine_cling_grip", "crest_beast",
-                "crest_wanderer", "crest_reaper", "drifters_cloak", "charge_slash", "bellway_ride", "caravan_ride" },
+                "crest_wanderer", "crest_reaper", "drifters_cloak", "charge_slash", "needolin_deep_shellwood", "bellway_ride",
+                "caravan_ride" },
             entries.Where(e => e.Follow).Select(e => e.Name));
-        Assert.Equal(new[] { "End", null, "End", "Set Finished", "Set Finished", "Set Finished", "Set Finished",
-                "Set Finished", "End 2", "End 2", "End 2", "Talk End 3", "Down To Idle", null, null },
+        // (0.4 world Task 17) the Bell Beast's heart and its memory: each game's own Silk Heart Memory Return gives
+        // its hero back; Shellwood_11b's deep memory (0.4 world Task 17 Step 4): the Flower Queen's own death in each
+        // game (her corpse's Heart Death) brings its hero back
+        Assert.Equal(new[] { "End", null, "End", null, null, null, null, "Set Finished", "Set Finished", "Set Finished", "Set Finished",
+                "Set Finished", "End 2", "End 2", "End 2", "Talk End 3", "Down To Idle", null, null, null },
             entries.Where(e => e.Follow).Select(e => e.Release));
         Assert.Null(CutsceneCatalog.Load("""[{"name": "a", "scenes": ["R"], "object": "O", "fsm": "F", "start": ["S"]}]""")[0].Release);
+    }
+
+    // (0.4 world Task 17 Step 4) The Widow's win: in the friend's game her FSM is SSMP's copy, off, so it follows none
+    // of her states (widow-follow-p2: "is off: Hornet Dash not followed"); it goes into Memory_Needolin itself as hers
+    // reaches To Memory Scene, and her memory's Memory Control is followed there
+    [Fact]
+    public void The_widows_win_enters_her_memory_in_a_game_whose_fsm_is_off() {
+        var widow = CutsceneCatalog.Load(Shipped).Single(e => e.Name == "widow_win");
+        Assert.Equal(new CutsceneEnter("To Memory Scene", "Memory_Needolin", "door_wakeOnGround"), widow.Enter);
+        Assert.True(CutsceneEnter.Due(widow.Enter, "To Memory Scene", fsmOn: false));
+        Assert.False(CutsceneEnter.Due(widow.Enter, "To Memory Scene", fsmOn: true));  // a game that runs her plays it itself
+        Assert.False(CutsceneEnter.Due(widow.Enter, "Get Needolin", fsmOn: false));
+        Assert.False(CutsceneEnter.Due(null, "To Memory Scene", fsmOn: false));
     }
 
     // (0.3.21) A ride is its rider's: the other game shows what the room shows (the Bell Beast coming; the caravan

@@ -36,6 +36,10 @@ internal class DamageHeroComponent : EntityComponent {
     private readonly bool[] _lastEnabled;
     private float _lastRefresh;
 
+    /// <summary>(coop, optimization fix F) When the box states last changed, or the component was made: the 0.05 s
+    /// refresh runs for DamagePairs.FastFor seconds after it.</summary>
+    private float _lastChange = Time.unscaledTime;
+
     /// <summary>
     /// (coop) A copy's: whether each box was on in the scene host's last data (DeathOrder.WaitsForBox).
     /// </summary>
@@ -117,7 +121,8 @@ internal class DamageHeroComponent : EntityComponent {
             changed = true;
         }
 
-        var refresh = DamagePairs.RefreshDue(Time.unscaledTime, _lastRefresh);
+        if (changed) _lastChange = Time.unscaledTime;
+        var refresh = DamagePairs.RefreshDue(Time.unscaledTime, _lastRefresh, _lastChange);
         if (!changed && !refresh) {
             return;
         }

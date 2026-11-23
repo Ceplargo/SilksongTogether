@@ -14,6 +14,31 @@ internal static partial class QuestRewards {
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool PaysEveryone() => true;
 
+    /// <summary>
+    /// (0.4 World B) Whether another player's rosary set from a saved world pickup pays this player one too. Not inlined:
+    /// rosary_pickup's twin skips it in both games, which gives false: only the taker is paid, as before.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool PaysPickups() => true;
+
+    /// <summary>Another player took a rosary set from a saved world pickup: this player gets one, by the game's own Get.</summary>
+    public static void Taken(TakenNote note) {
+        if (!PaysPickups()) {
+            return;
+        }
+
+        try {
+            if (CollectableItemManager.GetItemByName(note.ItemKey) is not { } item || !PaysOthersPickup(item.name, true)) {
+                return;
+            }
+
+            Debug.Log($"[BossRule] Taken received: {note.Taker}'s {note.ItemKey} in {note.Scene}, pays 1 here too");
+            item.Get(1);
+        } catch (Exception e) {
+            Debug.LogError($"[BossRule] Could not pay {note.Taker}'s {note.ItemKey} here: {e}");
+        }
+    }
+
     /// <summary>When this game last handed in each quest.</summary>
     private static readonly Dictionary<string, double> HandIns = new();
 

@@ -149,6 +149,11 @@ internal class ClientManager : IClientManager {
     private readonly Stopwatch _lastPositionStopwatch;
 
     /// <summary>
+    /// (coop) How many times the unchanged place went again since the hero's last move (StillResend).
+    /// </summary>
+    private int _stillResends;
+
+    /// <summary>
     /// Keeps track of the last updated scale of the local player object.
     /// </summary>
     private Vector3 _lastScale;
@@ -1295,7 +1300,11 @@ internal class ClientManager : IClientManager {
                 _lastPosition = newPosition;
                 // Restart the stopwatch
                 _lastPositionStopwatch.Restart();
+                _stillResends = 0;
 
+                _netClient.UpdateManager.UpdatePlayerPosition(new Vector2(newPosition.x, newPosition.y));
+            } else if (StillResend.Due(_lastPositionStopwatch.ElapsedMilliseconds, ref _stillResends)) {
+                // (coop) the place sent again once the hero stood still: the last update may have been lost
                 _netClient.UpdateManager.UpdatePlayerPosition(new Vector2(newPosition.x, newPosition.y));
             }
         }

@@ -462,7 +462,10 @@ internal static partial class EntityFsmActions {
             return false;
         }
 
-        if (IsObjectInRegistry(gameObject)) {
+        // (coop) an entity that turns by its RotationComponent sends its own turn too, in its state's order (OwnTurn)
+        var turnsByComponent = EntityRegistry.TryGetEntry(gameObject, out var entry) &&
+                               System.Array.IndexOf(entry.ComponentTypes ?? [], Component.EntityComponentType.Rotation) >= 0;
+        if (!OwnTurn.Replays(IsObjectInRegistry(gameObject), turnsByComponent)) {
             //Logger.Debug("Tried getting SetPosition network data, but entity is in registry");
             return false;
         }

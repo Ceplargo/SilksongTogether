@@ -33,7 +33,17 @@ internal static class DamagePairs {
     }
 
     // A delayed old activation must be replaced even while the native keeps the same damage state.
-    internal static bool RefreshDue(float now, float last) => now - last >= 0.05f && KeepsDamageFresh();
+    // (coop, optimization fix F) A late retry of an older update comes within a few resend waits (each 0.2 to 1 s) of
+    // the change it carried, so the 0.05 s refresh runs for FastFor seconds after the last change, then once a second:
+    // every enemy's refresh at 20 a second while nothing changed was a third of the host's garbage standing still
+    // (mini PC job 48). SlowsWhenStill skipped gives the 0.05 s refresh at all times, as before.
+    internal const float FastFor = 3f;
+
+    internal static bool RefreshDue(float now, float last, float changed) =>
+        now - last >= (now - changed < FastFor || !SlowsWhenStill() ? 0.05f : 1f) && KeepsDamageFresh();
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool SlowsWhenStill() => true;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static bool KeepsDamageFresh() => true;

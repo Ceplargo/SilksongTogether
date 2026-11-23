@@ -29,7 +29,10 @@ internal class ReliabilityManager<TOutgoing, TPacketId>(
     /// Records that an ACK was received, removing the packet from tracking.
     /// </summary>
     public void OnAckReceived(ushort sequence) {
-        _sentPackets.TryRemove(sequence, out _);
+        // (coop, ResendRules.Flat) one judged lost and acked late: what it carried need not go again
+        if (_sentPackets.TryRemove(sequence, out var tracked) && tracked.Lost) {
+            updateManager.OnLateAck(tracked.Packet);
+        }
     }
 
     /// <summary>

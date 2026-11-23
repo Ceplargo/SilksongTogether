@@ -34,7 +34,7 @@ internal class ClientUpdateManager : UpdateManager<ServerUpdatePacket, ServerUpd
         }
 
         lock (Lock) {
-            CurrentUpdatePacket.SetLostReliableData(lostPacket);
+            CurrentUpdatePacket.SetLostReliableData(lostPacket, Arrived, OldThrows);
         }
     }
 

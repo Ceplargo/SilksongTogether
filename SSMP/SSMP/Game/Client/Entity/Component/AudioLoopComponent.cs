@@ -37,6 +37,10 @@ internal class AudioLoopComponent : EntityComponent {
 
     /// <summary>(coop) The clip each host source last played a loop of, as last sent ("" for none).</summary>
     private readonly string[] _lastClips;
+
+    /// <summary>(coop) The clip object each host source held at the last update, so its name (Unity's Object.name makes
+    /// a new string on each read) is read only when the clip changes.</summary>
+    private readonly AudioClip?[] _lastClipObjects;
     private readonly LoopStarts[] _sourceStarts;
 
     /// <summary>(coop) The starts on the client clone's sources, for when the copy last played each (none for a source
@@ -65,6 +69,7 @@ internal class AudioLoopComponent : EntityComponent {
         _clientSources = clientSources;
         _lastPlaying = hostSources.Select(source => PlaysLoop(source, false)).ToArray();
         _lastClips = hostSources.Select(ClipName).ToArray();
+        _lastClipObjects = hostSources.Select(source => source != null ? source.clip : null).ToArray();
         _sourceStarts = hostSources.Select(LoopStarts.Watch).ToArray();
         _copyStarts = LoopStarts.WatchCopies(clientSources);
         _lastSentStarts = new uint[hostSources.Length];
@@ -96,7 +101,12 @@ internal class AudioLoopComponent : EntityComponent {
         for (var i = 0; i < _hostSources.Length; i++) {
             var playing = PlaysLoop(_hostSources[i], _lastPlaying[i]);
             var starts = _sourceStarts[i].Number;
-            var clip = ClipName(_hostSources[i]);
+            var clipObject = _hostSources[i] != null ? _hostSources[i].clip : null;
+            var clip = _lastClips[i];
+            if (!ReferenceEquals(clipObject, _lastClipObjects[i])) {
+                _lastClipObjects[i] = clipObject;
+                clip = ClipName(_hostSources[i]);
+            }
             if (playing != _lastPlaying[i] || (playing && (starts != _lastSentStarts[i] || clip != _lastClips[i]))) {
                 changed = true;
             }

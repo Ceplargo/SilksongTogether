@@ -50,4 +50,15 @@ internal static partial class QuestRewards {
     /// <param name="unique">Whether the reward is one of a kind.</param>
     public static bool PaysOthers(string? rewardClass, string? rewardName, bool unique) =>
         !unique && (rewardClass == Money || rewardName != null && RosarySets.Contains(rewardName));
+
+    /// <summary>
+    /// (0.4 World B) Whether a world pickup's item, taken in one game, is paid to each other player in the game too: a
+    /// rosary set (each player's own in SSMP) from a saved pickup, which is taken for everyone (shared). A pickup with no
+    /// saved flag (an enemy's drop) stays on each player's own screen for them to take (the money decision, 2026-11-10).
+    /// Ant_04_left's string paid only its taker (NOTES 575; the project, 2026-11-19).
+    /// </summary>
+    /// <param name="itemName">The pickup's item's asset name.</param>
+    /// <param name="saved">Whether the pickup saves its taken flag (a PersistentBoolItem).</param>
+    public static bool PaysOthersPickup(string? itemName, bool saved) =>
+        saved && itemName != null && RosarySets.Contains(itemName);
 }

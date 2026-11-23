@@ -420,6 +420,75 @@ internal static partial class EntityFsmActions {
 
     #endregion
 
+    #region FlingObjectsFromGlobalPoolVelTime
+
+    /// <summary>Builds network data from the FSM action: none; the copy flings at its own times, as the Time one.</summary>
+    private static bool GetNetworkDataFromAction(EntityNetworkData data, FlingObjectsFromGlobalPoolVelTime action) =>
+        FlingVelTime.Copies();
+
+    /// <summary>
+    /// (coop, 0.4) Applies network data to the FSM action: flings as FlingObjectsFromGlobalPoolTime's replay, each
+    /// velocity from its x and y speed ranges (FlingVelTime).
+    /// shortcut: no spawn event for its flung objects (the Time one's OnUpdate hook): add one if it ever flings an entity
+    /// </summary>
+    private static void ApplyNetworkDataFromAction(EntityNetworkData data, FlingObjectsFromGlobalPoolVelTime action) {
+        var coroutine = MonoBehaviourUtil.Instance.StartCoroutine(Behaviour());
+
+        new ActionInState {
+            Fsm = action.Fsm,
+            StateName = action.State.Name,
+            Coroutine = coroutine
+        }.Register();
+        return;
+
+        IEnumerator Behaviour() {
+            while (true) {
+                yield return new WaitForSeconds(action.frequency.Value);
+
+                if (action.gameObject.Value == null || EndsGoneFlings() && CopyGone(action)) {
+                    break;
+                }
+
+                var position = Vector3.zero;
+                var spawnPoint = action.spawnPoint.Value;
+                if (spawnPoint != null) {
+                    position = spawnPoint.transform.position;
+                    if (!action.position.IsNone) {
+                        position += action.position.Value;
+                    }
+                } else if (!action.position.IsNone) {
+                    position = action.position.Value;
+                }
+
+                var numSpawns = Random.Range(action.spawnMin.Value, action.spawnMax.Value + 1);
+                for (var i = 0; i < numSpawns; i++) {
+                    var gameObject = action.gameObject.Value.Spawn(position, Quaternion.Euler(Vector3.zero));
+
+                    if (action.originVariationX != null) {
+                        position.x += Random.Range(-action.originVariationX.Value, action.originVariationX.Value);
+                    }
+
+                    if (action.originVariationY != null) {
+                        position.y += Random.Range(-action.originVariationY.Value, action.originVariationY.Value);
+                    }
+
+                    gameObject.transform.position = position;
+
+                    var rigidBody = gameObject.GetComponent<Rigidbody2D>();
+                    if (rigidBody == null) {
+                        continue;
+                    }
+
+                    var (x, y) = FlingVelTime.Velocity(action.speedMinX.Value, action.speedMaxX.Value,
+                        action.speedMinY.Value, action.speedMaxY.Value, Random.Range);
+                    rigidBody.velocity = new Vector2(x, y);
+                }
+            }
+        }
+    }
+
+    #endregion
+
     #region SpawnObjectFromGlobalPoolDelay
 
     /// <summary>
@@ -436,21 +505,31 @@ internal static partial class EntityFsmActions {
     }
 
     /// <summary>Applies network data to the FSM action: the same object after the same delay, where the copy's spawn
-    /// point is then, unless the scene host's FSM left the state first.</summary>
+    /// point is then, unless the scene host's FSM left the state first; one due as it is left is made then (DelaySpawns).
+    /// </summary>
     private static void ApplyNetworkDataFromAction(EntityNetworkData data, SpawnObjectFromGlobalPoolDelay action) {
         var delay = data.Packet.ReadFloat();
+        var began = Time.time;
+        var made = false;
         var coroutine = MonoBehaviourUtil.Instance.StartCoroutine(Behaviour());
 
         new ActionInState {
             Fsm = action.Fsm,
             StateName = action.State.Name,
-            Coroutine = coroutine
+            Coroutine = coroutine,
+            ExitAction = () => {
+                if (DelaySpawns.AtExit(made, Time.time - began, delay)) Spawn();
+            }
         }.Register();
         return;
 
         IEnumerator Behaviour() {
             yield return new WaitForSeconds(delay);
+            Spawn();
+        }
 
+        void Spawn() {
+            made = true;
             if (action.gameObject.Value != null && !CopyGone(action)) {
                 var (position, euler) = PoolSpawnPlace(action.spawnPoint.Value, action.position, action.rotation, Vector3.zero);
                 var spawned = action.gameObject.Value.Spawn();

@@ -417,7 +417,13 @@ internal partial class GamePatcher {
             playerInfo.FrameCount = currentFrame;
             playerInfo.Position = player.transform.position;
 
-            var colliders = PlayerTargetRegistry.GetPlayerColliders(player);
+            // (coop) The local hero by its body alone, as the game's own trigger sees it and as the other player's copy
+            // (its body box only) is seen: counting its swing's boxes too woke Bone_07's Rock Roller from outside its Wake
+            // Range for the scene host only; the game alone never wakes it from there (0.4 enemies, probe_wake_alone)
+            var colliders = RangeSeesHeroBodyOnly() && HeroController.instance != null &&
+                            player == HeroController.instance.gameObject
+                ? HeroBodyColliders(player)
+                : PlayerTargetRegistry.GetPlayerColliders(player);
             if (playerInfo.ColliderBounds.Length != colliders.Length) {
                 playerInfo.ColliderBounds = new Bounds[colliders.Length];
             }
@@ -465,6 +471,28 @@ internal partial class GamePatcher {
 
         return false;
     }
+
+    /// <summary>
+    /// (coop) The local hero's own colliders (its body box), cached per hero object.
+    /// </summary>
+    private static Collider2D[] HeroBodyColliders(GameObject hero) {
+        if (_heroBodyOf != hero) {
+            _heroBodyOf = hero;
+            _heroBody = hero.GetComponents<Collider2D>();
+        }
+
+        return _heroBody;
+    }
+
+    private static GameObject? _heroBodyOf;
+    private static Collider2D[] _heroBody = [];
+
+    /// <summary>
+    /// (coop) The switch wake_closed_side's twin turns off (a skipped bool method returns false): the local hero is then
+    /// seen in a range by every collider under it, its swing's included, as before 0.4.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool RangeSeesHeroBodyOnly() => true;
 
     /// <summary>
     /// (coop) The switch ambush_other's twin turns off (a skipped bool method returns false): the range test then reads

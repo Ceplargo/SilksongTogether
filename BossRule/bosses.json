@@ -315,12 +315,15 @@
   "gate": "top1",
   "boss": "Crawfather",
   "start": {
-   "kind": "battleScene",
-   "object": "Battle Scene"
+   "kind": "fsm",
+   "object": "Battle Start",
+   "fsm": "Battle Start",
+   "state": "Idle",
+   "event": "ENTER"
   },
   "area": {
    "kind": "trigger",
-   "object": "Battle Scene"
+   "object": "Battle Start"
   },
   "needs": {},
   "hp": 1300,

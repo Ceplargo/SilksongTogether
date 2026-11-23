@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using SSMP.Game.Client.Entity.Component;
 using SSMP.Logging;
 using SSMP.Math;
+using SSMP.Util;
 
 // ReSharper disable InconsistentNaming
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider
@@ -52,7 +53,7 @@ internal class EntityUpdate : BaseEntityUpdate, IPoolable {
     /// <summary>
     /// A set containing the types of updates contained in this packet.
     /// </summary>
-    public HashSet<EntityUpdateType> UpdateTypes { get; }
+    public EnumSet<EntityUpdateType> UpdateTypes { get; }
 
     /// <summary>
     /// The position of the entity.
@@ -78,7 +79,7 @@ internal class EntityUpdate : BaseEntityUpdate, IPoolable {
     /// Construct the entity update data.
     /// </summary>
     public EntityUpdate() {
-        UpdateTypes = new HashSet<EntityUpdateType>();
+        UpdateTypes = new EnumSet<EntityUpdateType>();
         Scale = new ScaleData();
     }
 
@@ -452,7 +453,7 @@ internal class ReliableEntityUpdate : BaseEntityUpdate, IPoolable {
     /// <summary>
     /// A set containing the types of updates contained in this packet.
     /// </summary>
-    public HashSet<EntityUpdateType> UpdateTypes { get; }
+    public EnumSet<EntityUpdateType> UpdateTypes { get; }
 
     /// <summary>
     /// Whether the entity is active or not.
@@ -473,18 +474,25 @@ internal class ReliableEntityUpdate : BaseEntityUpdate, IPoolable {
     /// Construct the reliable entity update data.
     /// </summary>
     public ReliableEntityUpdate() {
-        UpdateTypes = new HashSet<EntityUpdateType>();
+        UpdateTypes = new EnumSet<EntityUpdateType>();
         GenericData = new List<EntityNetworkData>();
         HostFsmData = new Dictionary<byte, EntityHostFsmData>();
     }
+
+    /// <summary>(coop, ResendRules.DropsOldThrows) Whether it carries an update of its thrown objects.</summary>
+    public bool HasThrown => UpdateTypes.Contains(EntityUpdateType.Data) &&
+                             GenericData.Exists(d => d.Type == EntityComponentType.Thrown);
 
     /// <summary>
     /// Creates a resend copy with only the host FSM fields not superseded by a newer update.
     /// </summary>
     /// <param name="newerHostFsmData">Newer host FSM data grouped by FSM index.</param>
+    /// <param name="withoutThrown">(coop, ResendRules.DropsOldThrows) Leave out its thrown objects too: a newer
+    /// update of them went out.</param>
     /// <returns>A pooled copy, or null when all data in this update was superseded.</returns>
     public ReliableEntityUpdate? CloneWithoutSupersededHostFsm(
-        IReadOnlyDictionary<byte, EntityHostFsmData> newerHostFsmData
+        IReadOnlyDictionary<byte, EntityHostFsmData> newerHostFsmData,
+        bool withoutThrown = false
     ) {
         var clone = ObjectPool<ReliableEntityUpdate>.Get();
         clone.Id = Id;
@@ -495,9 +503,13 @@ internal class ReliableEntityUpdate : BaseEntityUpdate, IPoolable {
         }
 
         if (UpdateTypes.Contains(EntityUpdateType.Data)) {
-            clone.UpdateTypes.Add(EntityUpdateType.Data);
             foreach (var data in GenericData) {
+                if (withoutThrown && data.Type == EntityComponentType.Thrown) continue;
                 clone.GenericData.Add(data.Clone());
+            }
+
+            if (!withoutThrown || clone.GenericData.Count > 0) {
+                clone.UpdateTypes.Add(EntityUpdateType.Data);
             }
         }
 

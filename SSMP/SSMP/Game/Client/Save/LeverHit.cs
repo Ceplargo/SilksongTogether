@@ -22,8 +22,8 @@ internal static class LeverHit {
     private static readonly FieldInfo ConnectedGates = AccessTools.Field(typeof(Lever_tk2d), "connectedGates");
 
     /// <summary>The room's lever that opens gate (its FSM or its unlockable prop), or null.</summary>
-    public static Lever_tk2d? LeverOf(GameObject gate) {
-        foreach (var lever in Object.FindObjectsByType<Lever_tk2d>(FindObjectsSortMode.None)) {
+    public static Lever_tk2d? LeverOf(GameObject gate, Lever_tk2d[]? levers = null) {
+        foreach (var lever in levers ?? Object.FindObjectsByType<Lever_tk2d>(FindObjectsSortMode.None)) {
             if (lever.gameObject.scene != gate.scene) continue;
             if (FsmGates.GetValue(lever) is PlayMakerFSM[] fsms && System.Array.Exists(fsms, f => f && f.gameObject == gate) ||
                 ConnectedGates.GetValue(lever) is UnlockablePropBase[] props &&
@@ -81,8 +81,8 @@ internal static class LeverHit {
     private static readonly int RetractedAnim = Animator.StringToHash("Retracted");
 
     /// <summary>The room's Lever that opens gate (its FSM or its unlockable prop), or null.</summary>
-    public static Lever? PlainLeverOf(GameObject gate) {
-        foreach (var lever in Object.FindObjectsByType<Lever>(FindObjectsSortMode.None)) {
+    public static Lever? PlainLeverOf(GameObject gate, Lever[]? levers = null) {
+        foreach (var lever in levers ?? Object.FindObjectsByType<Lever>(FindObjectsSortMode.None)) {
             if (lever.gameObject.scene != gate.scene) continue;
             if (PlainFsmGates.GetValue(lever) is PlayMakerFSM[] fsms && System.Array.Exists(fsms, f => f && f.gameObject == gate) ||
                 PlainUnlockables.GetValue(lever) is UnlockablePropBase[] props &&

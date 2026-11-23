@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using HarmonyLib;
 using HutongGames.PlayMaker;
 using HutongGames.PlayMaker.Actions;
 using MonoMod.RuntimeDetour;
@@ -168,6 +169,26 @@ internal class Entity {
     /// </summary>
     private bool _isControlled;
 
+    /// <summary>(coop, 0.4 enemies Task 6) A copy that follows its scripted death (SpecialDeath.KindFollows): its health
+    /// manager, when it was first seen dead here, and when the scene host's hide that waits for its death came
+    /// (HideWaits); null otherwise.</summary>
+    private HealthManager? _followedDeath;
+    private int _followedStartHp;
+    private float? _seenDeadAt;
+    private float? _hideCameAt;
+
+    /// <summary>(coop) The renderer's enabled the scene host sent with a hide that waits for the copy's death, applied
+    /// with that hide: the Wasp turns its renderer off in the frame it is hidden, and applied at once it left the copy
+    /// undrawn at 5 health and its death never shown (wasp_drop, Stage 2). A renderer-off that comes before the hide,
+    /// with the copy's death not yet shown, waits as a hide would from when it came (_rendererCameAt; the fresh proof
+    /// 2026-11-18_120931, Shellwood_01: undrawn at 5 health 7 ms before its death and hide came). Null when none is
+    /// held.</summary>
+    private bool? _heldRendererOn;
+    private float? _rendererCameAt;
+
+    /// <summary>Where the room placed the original (MakeHost runs its init states there).</summary>
+    private readonly Vector3 _spawnPosition;
+
     /// <summary>
     /// Whether the scene host is determined, or alternatively whether the entity has been determined to be a host or client entity.
     /// </summary>
@@ -216,9 +237,11 @@ internal class Entity {
 
         Type = type;
         _nativeFlock = type == EntityType.Brushflit && FlockCopies.TracksFlockCopies();
-        _uninterruptedStartup = _nativeFlock || NativeStartup.KeepsHiveRunning(type);
+        _uninterruptedStartup = _nativeFlock ||
+                                NativeStartup.KeepsRunning(type, hostObject.GetComponentInParent<BattleWave>(true) != null);
 
         _isControlled = true;
+        _spawnPosition = hostObject.transform.position;
 
         if (clientObject == null) {
             Object = new HostClientPair<GameObject> {
@@ -534,6 +557,10 @@ internal class Entity {
                 SpecialDeath.KindFollows(Type)
             );
             _components[EntityComponentType.Death] = hmComponent;
+            if (SpecialDeath.KindFollows(Type)) {
+                _followedDeath = clientHealthManager;
+                _followedStartHp = clientHealthManager.hp;
+            }
             _components[EntityComponentType.Health] = hmComponent;
             _components[EntityComponentType.Invincibility] = hmComponent;
             _components[EntityComponentType.BlockedHit] = hmComponent;
@@ -849,6 +876,7 @@ internal class Entity {
     /// </summary>
     [SuppressMessage("ReSharper", "CompareOfFloatsByEqualityOperator")]
     private void OnUpdate() {
+        if (_followedDeath != null) FollowsDeathThenHide();
         if (Object.Host == null) {
             if (_lastIsActive) {
                 // If the host object was active, but now it null (or destroyed in Unity), we can send
@@ -956,12 +984,15 @@ internal class Entity {
         // Sync Host FSM states and variables.
         // To avoid garbage collection pressure, we first check for changes using simple, direct loops
         // (avoiding generic methods with delegates/closures) and only retrieve/populate EntityHostFsmData from the pool if a change is detected.
+        // (coop, 0.4) whole: every state and variable once, for an entity registered after its FSM ran (SendsFsmWhole)
+        var whole = _sendsWhole;
+        _sendsWhole = false;
         for (byte fsmIndex = 0; fsmIndex < _fsms.Host.Count; fsmIndex++) {
             var fsm = _fsms.Host[fsmIndex];
             var snapshot = _fsmSnapshots[fsmIndex];
 
             var lastStateName = snapshot.CurrentState;
-            var hasStateChange = fsm.ActiveStateName != lastStateName;
+            var hasStateChange = fsm.ActiveStateName != lastStateName || whole && !string.IsNullOrEmpty(fsm.ActiveStateName);
 
             var hasFloatsChange = false;
             for (byte i = 0; i < fsm.FsmVariables.FloatVariables.Length; i++) {
@@ -1011,6 +1042,15 @@ internal class Entity {
                 }
             }
 
+            if (whole) {
+                hasFloatsChange = fsm.FsmVariables.FloatVariables.Length > 0;
+                hasIntsChange = fsm.FsmVariables.IntVariables.Length > 0;
+                hasBoolsChange = fsm.FsmVariables.BoolVariables.Length > 0;
+                hasStringsChange = fsm.FsmVariables.StringVariables.Length > 0;
+                hasVector2SChange = fsm.FsmVariables.Vector2Variables.Length > 0;
+                hasVector3SChange = fsm.FsmVariables.Vector3Variables.Length > 0;
+            }
+
             if (hasStateChange || hasFloatsChange || hasIntsChange || hasBoolsChange || hasStringsChange ||
                 hasVector2SChange || hasVector3SChange) {
                 var data = ObjectPool<EntityHostFsmData>.Get();
@@ -1025,7 +1065,7 @@ internal class Entity {
                     data.Types.Add(EntityHostFsmData.Type.Floats);
                     for (byte i = 0; i < fsm.FsmVariables.FloatVariables.Length; i++) {
                         var val = fsm.FsmVariables.FloatVariables[i].Value;
-                        if (val != snapshot.Floats[i]) {
+                        if (whole || val != snapshot.Floats[i]) {
                             snapshot.Floats[i] = val;
                             data.Floats[i] = val;
                         }
@@ -1036,7 +1076,7 @@ internal class Entity {
                     data.Types.Add(EntityHostFsmData.Type.Ints);
                     for (byte i = 0; i < fsm.FsmVariables.IntVariables.Length; i++) {
                         var val = fsm.FsmVariables.IntVariables[i].Value;
-                        if (val != snapshot.Ints[i]) {
+                        if (whole || val != snapshot.Ints[i]) {
                             snapshot.Ints[i] = val;
                             data.Ints[i] = val;
                         }
@@ -1047,7 +1087,7 @@ internal class Entity {
                     data.Types.Add(EntityHostFsmData.Type.Bools);
                     for (byte i = 0; i < fsm.FsmVariables.BoolVariables.Length; i++) {
                         var val = fsm.FsmVariables.BoolVariables[i].Value;
-                        if (val != snapshot.Bools[i]) {
+                        if (whole || val != snapshot.Bools[i]) {
                             snapshot.Bools[i] = val;
                             data.Bools[i] = val;
                         }
@@ -1058,7 +1098,7 @@ internal class Entity {
                     data.Types.Add(EntityHostFsmData.Type.Strings);
                     for (byte i = 0; i < fsm.FsmVariables.StringVariables.Length; i++) {
                         var val = fsm.FsmVariables.StringVariables[i].Value;
-                        if (snapshot.Strings[i] != null && val != snapshot.Strings[i]) {
+                        if (whole ? val != null : snapshot.Strings[i] != null && val != snapshot.Strings[i]) {
                             snapshot.Strings[i] = val;
                             data.Strings[i] = val;
                         }
@@ -1069,7 +1109,7 @@ internal class Entity {
                     data.Types.Add(EntityHostFsmData.Type.Vector2s);
                     for (byte i = 0; i < fsm.FsmVariables.Vector2Variables.Length; i++) {
                         var val = fsm.FsmVariables.Vector2Variables[i].Value;
-                        if (val != snapshot.Vector2s[i]) {
+                        if (whole || val != snapshot.Vector2s[i]) {
                             snapshot.Vector2s[i] = val;
                             data.Vec2s[i] = (Math_Vector2) val;
                         }
@@ -1080,7 +1120,7 @@ internal class Entity {
                     data.Types.Add(EntityHostFsmData.Type.Vector3s);
                     for (byte i = 0; i < fsm.FsmVariables.Vector3Variables.Length; i++) {
                         var val = fsm.FsmVariables.Vector3Variables[i].Value;
-                        if (val != snapshot.Vector3s[i]) {
+                        if (whole || val != snapshot.Vector3s[i]) {
                             snapshot.Vector3s[i] = val;
                             data.Vec3s[i] = (SSMP.Math.Vector3) val;
                         }
@@ -1356,6 +1396,18 @@ internal class Entity {
             return;
         }
 
+        // (coop, 0.4) The enemy's own start-up (its FSMs' init states) runs where the room placed it, as it did in the
+        // runner's game, before the original goes to the copy's place: a Mitefly's Init frees its Patrol and Start
+        // points where it stands, and run after the move it freed them up to 5 units off. One taken over near the top
+        // of its patrol chased a point inside the ceiling and stood still against it (Greymoor_16, the takeover pass)
+        var initedAtSpawn = !_hasParent && TakeoverStates.InitsAtSpawn();
+        if (initedAtSpawn) {
+            Object.Host.transform.position = _spawnPosition;
+            foreach (var fsm in _fsms.Host) {
+                EntityInitializer.InitializeFsm(fsm);
+            }
+        }
+
         if (_hasParent) {
             //Logger.Debug("  Entity has parent, only setting local transform");
 
@@ -1364,17 +1416,23 @@ internal class Entity {
         } else {
             //Logger.Debug("  Entity has no parent, calculating transform");
 
-            var clientPos = Object.Client.transform.localPosition;
-            var parentPos = Vector3.zero;
-            if (Object.Host.transform.parent != null) {
-                parentPos = Object.Host.transform.parent.position;
+            if (TakeoverStates.PlacesByWorld()) {
+                // (coop, 0.4) the copy may have been moved under a parent (TakeoverStates.PlacesByWorld)
+                Object.Host.transform.position = Object.Client.transform.position;
+                _lastPosition = Object.Host.transform.position;
+            } else {
+                var clientPos = Object.Client.transform.localPosition;
+                var parentPos = Vector3.zero;
+                if (Object.Host.transform.parent != null) {
+                    parentPos = Object.Host.transform.parent.position;
+                }
+
+                var newPosX = clientPos.x - parentPos.x;
+                var newPosY = clientPos.y - parentPos.y;
+                var newPosZ = clientPos.z - parentPos.z;
+
+                Object.Host.transform.localPosition = _lastPosition = new Vector3(newPosX, newPosY, newPosZ);
             }
-
-            var newPosX = clientPos.x - parentPos.x;
-            var newPosY = clientPos.y - parentPos.y;
-            var newPosZ = clientPos.z - parentPos.z;
-
-            Object.Host.transform.localPosition = _lastPosition = new Vector3(newPosX, newPosY, newPosZ);
 
             // Since the scale of the client object is the entire scale we have and the host object scale can be in a
             // hierarchy, we need to calculate what the new local scale of the host will be to match the client scale
@@ -1408,7 +1466,7 @@ internal class Entity {
             //Logger.Debug($"    Restoring variables for FSM: {fsm.Fsm.Name}");
 
             // Force initialize the host FSM, since it might have been disabled before initializing
-            EntityInitializer.InitializeFsm(fsm);
+            if (!initedAtSpawn) EntityInitializer.InitializeFsm(fsm);
 
             var snapshot = _fsmSnapshots[fsmIndex];
 
@@ -1453,7 +1511,33 @@ internal class Entity {
                     Object.Host.GetComponents<Collider2D>().Any(collider => collider.enabled && !collider.isTrigger),
                     rigidBody.gravityScale != 0f
                 );
+                // (coop, 0.4) kinematic as the runner's earlier states left it (TakeoverBodies.HeldByWayIn)
+                if (ByWayIn(TakeoverBodies.HeldByWayIn)) {
+                    rigidBody.isKinematic = true;
+                // (coop, 0.4) dynamic as they left it, when an active solid on a child holds it up: a sprung Mite Trap
+                // lies on its child Phys (TakeoverBodies.ReleasedByWayIn)
+                } else if (rigidBody.isKinematic && HasChildSolid(rigidBody) && ByWayIn(TakeoverBodies.ReleasedByWayIn)) {
+                    rigidBody.isKinematic = false;
+                }
             }
+        }
+
+        bool ByWayIn(Func<string, string, IReadOnlyCollection<string>, IReadOnlyDictionary<string, TakeoverBodies.State>,
+            bool> rule) =>
+            _fsms.Host.Where((_, i) => !string.IsNullOrEmpty(_fsmSnapshots[i].CurrentState)).Any(fsm =>
+                rule(_fsmSnapshots[_fsms.Host.IndexOf(fsm)].CurrentState, fsm.Fsm.StartState,
+                    fsm.FsmGlobalTransitions.Select(t => t.ToState).ToArray(), KinematicGraph(fsm)));
+
+        // a child's enabled solid collider, switched on up to the root (the original may itself be off), on this body
+        bool HasChildSolid(Rigidbody2D body) =>
+            Object.Host.GetComponentsInChildren<Collider2D>(true).Any(c => c.gameObject != Object.Host && c.enabled &&
+                !c.isTrigger && c.GetComponentInParent<Rigidbody2D>(true) == body && OnUpToRoot(c.transform));
+
+        bool OnUpToRoot(Transform t) {
+            for (; t != null && t != Object.Host.transform; t = t.parent) {
+                if (!t.gameObject.activeSelf) return false;
+            }
+            return true;
         }
 
         var bodyFirst = TakeoverStates.SetsBodyFirst();
@@ -1535,9 +1619,22 @@ internal class Entity {
 
                 //Logger.Debug($"  Animator and current clip present, updating animation: {clientAnimation}, {wrapMode}");
 
-                LateUpdateAnimation(_animator.Host, clientAnimation, wrapMode);
+                // (coop, 0.4) a play-once clip goes on from the copy's frame, so its event frames still come
+                // (TakeoverStates.PlayOnFrame)
+                if (wrapMode is tk2dSpriteAnimationClip.WrapMode.Once or tk2dSpriteAnimationClip.WrapMode.Single &&
+                    TakeoverStates.PlaysOnFromCopy() && _animator.Host.GetClipByName(clientAnimation) is { } hostClip) {
+                    _animator.Host.PlayFromFrame(clientAnimation, TakeoverStates.PlayOnFrame(_animator.Client.Playing,
+                        _animator.Client.CurrentFrame, hostClip.frames.Length, WaitsOnClipEvents()));
+                } else {
+                    LateUpdateAnimation(_animator.Host, clientAnimation, wrapMode);
+                }
             }
         }
+
+        // (coop, 0.4) drawn as its copy was: the init states can hide it (TakeoverStates.Drawn); a state entered again
+        // below has the last word
+        if (_components.TryGetValue(EntityComponentType.MeshRenderer, out var drawn) &&
+            drawn is MeshRendererComponent drawnMesh) drawnMesh.DrawAsCopy();
 
         var clientActive = Object.Client.activeSelf;
         var flockClip = _animator.Client?.CurrentClip?.name ?? "Idle";
@@ -1545,12 +1642,67 @@ internal class Entity {
         if (Flock is { } flock) flock.ActivateHost(clientActive, flockClip);
         else Object.Host.SetActive(clientActive);
 
+        // (coop, 0.4) A crawler as the runner's StartCrawler left it, now that its Awake has run (TakeoverCrawlers):
+        // its body before the states that threw are entered again (a StopCrawler among them resets its hold), and its
+        // walk after
+        var crawler = TakeoverCrawlers.StartsCrawlers() && Object.Host.activeInHierarchy
+            ? Object.Host.GetComponent<Crawler>()
+            : null;
+        var crawlStates = crawler == null
+            ? []
+            : Enumerable.Range(0, _fsms.Host.Count)
+                .Where(i => !string.IsNullOrEmpty(_fsmSnapshots[i].CurrentState))
+                .Select(i => (state: _fsmSnapshots[i].CurrentState, graph: CrawlGraph(_fsms.Host[i])))
+                .ToList();
+        if (crawlStates.Any(c => TakeoverCrawlers.SetUp(c.state, c.graph))) {
+            SetUpCrawler(crawler!, crawlStates.Select(c => TakeoverCrawlers.SpeedAt(c.state, c.graph))
+                .FirstOrDefault(speed => speed != null));
+        }
+
         foreach (var fsmIndex in enterAgain ?? []) {
             try {
                 _fsms.Host[fsmIndex].SetState(_fsmSnapshots[fsmIndex].CurrentState);
             } catch (Exception e) {
                 Logger.Warn($"Could not enter {_fsmSnapshots[fsmIndex].CurrentState} of {Object.Host.name}: {e}");
             }
+        }
+
+        if (crawlStates.Any(c => TakeoverCrawlers.WalksOn(c.state, c.graph))) crawler!.StartCrawling();
+
+        // (coop, 0.4) the velocity each taken-over state's entry set, lost while the original was inactive
+        // (TakeoverStates.SetsVelocityAgain); a state entered again above already set it while active
+        // shortcut: only the three velocity actions Act 1's takeover states use; add another if a room shows it
+        for (var fsmIndex = 0; fsmIndex < _fsms.Host.Count && TakeoverStates.SetsVelocityAgain(); fsmIndex++) {
+            var fsm = _fsms.Host[fsmIndex];
+            if (enterAgain?.Contains(fsmIndex) == true || string.IsNullOrEmpty(_fsmSnapshots[fsmIndex].CurrentState) ||
+                fsm.ActiveStateName != _fsmSnapshots[fsmIndex].CurrentState) continue;
+            foreach (var action in fsm.Fsm.ActiveState.Actions) {
+                if (action.Enabled && action is SetVelocity2d or SetVelocityByScale or SetVelocityAsAngle) {
+                    action.OnEnter();
+                }
+            }
+        }
+
+        // (coop, 0.4) a WalkerV2 walking in the runner's state walks on (TakeoverCrawlers.StartsWalkers)
+        var walker = TakeoverCrawlers.StartsWalkers() && Object.Host.activeInHierarchy
+            ? Object.Host.GetComponent<WalkerV2>()
+            : null;
+        if (walker != null && _fsms.Host.Where((_, i) => !string.IsNullOrEmpty(_fsmSnapshots[i].CurrentState))
+                .Any(fsm => TakeoverCrawlers.WalksOn(_fsmSnapshots[_fsms.Host.IndexOf(fsm)].CurrentState,
+                    WalkGraph(fsm)))) {
+            walker.StartWalking();
+        }
+
+        // (coop, 0.4) an old Walker walking in the runner's state walks: started first if it never was (its Start only
+        // sets it up while NotReady; Unity's own call next frame then leaves it), then moving (TakeoverCrawlers.WalksIn)
+        var oldWalker = TakeoverCrawlers.StartsWalkers() && Object.Host.activeInHierarchy
+            ? Object.Host.GetComponent<Walker>()
+            : null;
+        if (oldWalker != null && _fsms.Host.Where((_, i) => !string.IsNullOrEmpty(_fsmSnapshots[i].CurrentState))
+                .Any(fsm => TakeoverCrawlers.WalksIn(_fsmSnapshots[_fsms.Host.IndexOf(fsm)].CurrentState,
+                    OldWalkGraph(fsm)))) {
+            WalkerStart(oldWalker);
+            oldWalker.StartMoving();
         }
 
         // shortcut: FSMs still inactive here keep RestartOnEnable off, so a later re-enable by the game won't reset
@@ -1568,6 +1720,93 @@ internal class Entity {
 
         foreach (var component in _components.Values) {
             component.InitializeHost(sceneHostEpoch);
+        }
+    }
+
+    /// <summary>
+    /// (coop, 0.4) Whether a taken-over FSM's state waits on an event of its animator's clip (a Tk2dWatchAnimationEvents
+    /// or Tk2dPlayAnimationWithEvents with an event to send; TakeoverStates.PlayOnFrame).
+    /// </summary>
+    private bool WaitsOnClipEvents() => _fsms.Host.Any(fsm => fsm.Fsm.ActiveState?.Actions.Any(action => action.Enabled &&
+        action switch {
+            Tk2dWatchAnimationEvents watch => watch.animationTriggerEvent != null || watch.animationCompleteEvent != null,
+            Tk2dPlayAnimationWithEvents play => play.animationTriggerEvent != null || play.animationCompleteEvent != null,
+            _ => false
+        }) == true);
+
+    /// <summary>(coop, 0.4) Whether the next host update sends every FSM's state and variables whole.</summary>
+    private bool _sendsWhole;
+
+    /// <summary>(coop, 0.4) The next host update sends every FSM's state and variables whole
+    /// (EntitySpawnRules.SendsHeldSpawnWhole).</summary>
+    internal void SendsFsmWhole() => _sendsWhole = true;
+
+    private static readonly AccessTools.FieldRef<Crawler, bool> AllowRoofRecoil =
+        AccessTools.FieldRefAccess<Crawler, bool>("allowRoofRecoil");
+
+    /// <summary>Each state of an FSM: the isKinematic it sets on the enemy, and where it goes (TakeoverBodies).</summary>
+    private static Dictionary<string, TakeoverBodies.State> KinematicGraph(PlayMakerFSM fsm) =>
+        fsm.FsmStates.ToDictionary(state => state.Name, state => new TakeoverBodies.State(
+            state.Actions.OfType<SetIsKinematic2d>()
+                .FirstOrDefault(a => a.Enabled && a.gameObject.OwnerOption == OwnerDefaultOption.UseOwner)
+                ?.isKinematic.Value,
+            state.Transitions.Select(t => t.ToState).ToArray()
+        ));
+
+    /// <summary>
+    /// Each state of an FSM: whether it starts a WalkerV2 for good (a StartWalkerV2 that stops it on exit does not) or
+    /// stops it, and where it goes (TakeoverCrawlers.StartsWalkers).
+    /// </summary>
+    private static Dictionary<string, TakeoverCrawlers.State> WalkGraph(PlayMakerFSM fsm) =>
+        fsm.FsmStates.ToDictionary(state => state.Name, state => new TakeoverCrawlers.State(
+            state.Actions.OfType<StartWalkerV2>().Any(a => a.Enabled && !a.stopOnExit),
+            state.Actions.OfType<StopWalkerV2>().Any(a => a.Enabled),
+            state.Transitions.Select(t => t.ToState).ToArray()
+        ));
+
+    private static readonly System.Action<Walker> WalkerStart =
+        AccessTools.MethodDelegate<System.Action<Walker>>(AccessTools.Method(typeof(Walker), "Start"));
+
+    /// <summary>Each state of an FSM: whether it starts or stops an old Walker, and where it goes.</summary>
+    private static Dictionary<string, TakeoverCrawlers.State> OldWalkGraph(PlayMakerFSM fsm) =>
+        fsm.FsmStates.ToDictionary(state => state.Name, state => new TakeoverCrawlers.State(
+            state.Actions.OfType<StartWalker>().Any(a => a.Enabled),
+            state.Actions.OfType<StopWalker>().Any(a => a.Enabled),
+            state.Transitions.Select(t => t.ToState).ToArray()
+        ));
+
+    /// <summary>Each state of an FSM: whether it starts or stops a crawler, and where it goes (TakeoverCrawlers).</summary>
+    private static Dictionary<string, TakeoverCrawlers.State> CrawlGraph(PlayMakerFSM fsm) {
+        var graph = new Dictionary<string, TakeoverCrawlers.State>();
+        foreach (var state in fsm.FsmStates) {
+            graph[state.Name] = new TakeoverCrawlers.State(
+                state.Actions.Any(a => a.Enabled && a is StartCrawler),
+                state.Actions.Any(a => a.Enabled && a is StopCrawler),
+                state.Transitions.Select(t => t.ToState).ToArray(),
+                state.Actions.OfType<SetCrawlerSpeed>().FirstOrDefault(a => a.Enabled)?.Speed.Value
+            );
+        }
+
+        return graph;
+    }
+
+    /// <summary>
+    /// Crawler.StartCrawling's body part, without its walk (the game's own steps, in its order), at the speed the
+    /// runner's SetCrawlerSpeed left (TakeoverCrawlers.SpeedAt), else the original's own.
+    /// </summary>
+    private static void SetUpCrawler(Crawler crawler, float? speed) {
+        crawler.Speed = speed ?? crawler.Speed; // its setter runs UpdateCrawlerType: its type, hold and recoil blocks
+        var recoil = crawler.GetComponent<Recoil>();
+        var floor = crawler.Type == Crawler.CrawlerTypes.Floor;
+        crawler.GetComponent<Rigidbody2D>().gravityScale = floor ? 1f : 0f;
+        if (floor) {
+            recoil.FreezeInPlace = false;
+        } else if (!AllowRoofRecoil(crawler)) {
+            recoil.FreezeInPlace = true;
+            recoil.SetRecoilSpeed(0f);
+        } else {
+            recoil.IsDownBlocked = true;
+            recoil.IsUpBlocked = true;
         }
     }
 
@@ -1932,12 +2171,92 @@ internal class Entity {
     public void UpdateIsActive(bool active) {
         if (Object.Client != null) {
             //Logger.Info($"Entity '{Object.Client.name}' received active: {active}");
+            if (!active && _followedDeath != null && _isControlled) {
+                // (coop, 0.4 enemies Task 6) its hide waits for its death (HideWaits)
+                NoteDeath();
+                var now = Time.unscaledTime;
+                if (HideWaits.Due(CopyAlive(), CopyHurt(), _seenDeadAt, now, RoundTripS()) > now) {
+                    _hideCameAt ??= now;
+                    Logger.Debug($"(coop) hide of {Object.Client.name} waits for its death: alive {CopyAlive()}, " +
+                                 $"seen dead {(_seenDeadAt is { } d ? $"{now - d:0.000} s ago" : "no")}");
+                    return;
+                }
+            }
+
+            _hideCameAt = null;
+            ApplyHeldRenderer();
+            if (active) _seenDeadAt = null;
             Object.Client.SetActive(active);
             if (active && _isControlled && !_announced) Announce();
         } else {
             //Logger.Warn($"Entity ({Id}, {Type}) could not update active, because client object is null");
         }
     }
+
+    /// <summary>(coop, 0.4 enemies Task 6) Notes when the copy that follows its scripted death is first seen dead here,
+    /// and applies the scene host's hide that waited for its death once it is due.</summary>
+    private void FollowsDeathThenHide() {
+        NoteDeath();
+        if (_hideCameAt == null && _rendererCameAt is { } rendererCame && (!_isControlled || Time.unscaledTime >=
+                HideWaits.Due(CopyAlive(), CopyHurt(), _seenDeadAt, rendererCame, RoundTripS())))
+            ApplyHeldRenderer();
+        if (_hideCameAt is not { } came) return;
+        if (!_isControlled || Object.Client == null) {
+            _hideCameAt = null;
+            ApplyHeldRenderer();
+            return;
+        }
+
+        if (Time.unscaledTime < HideWaits.Due(CopyAlive(), CopyHurt(), _seenDeadAt, came, RoundTripS())) return;
+        _hideCameAt = null;
+        ApplyHeldRenderer();
+        Logger.Debug($"(coop) hide of {Object.Client.name} applied {Time.unscaledTime - came:0.000} s after it came, " +
+                     $"alive {CopyAlive()}");
+        Object.Client.SetActive(false);
+    }
+
+    private void ApplyHeldRenderer() {
+        _rendererCameAt = null;
+        if (_heldRendererOn is not { } on) return;
+        _heldRendererOn = null;
+        if (_components.TryGetValue(EntityComponentType.MeshRenderer, out var c) && c is MeshRendererComponent mesh)
+            mesh.SetEnabled(on);
+        else if (Object.Client != null && Object.Client.TryGetComponent<MeshRenderer>(out var own))
+            own.enabled = on;
+    }
+
+    /// <summary>(coop) Whether this renderer change of a copy that follows its death waits (and is kept to apply later):
+    /// any while its hide waits; a switch-off while its death has yet to show, as HideWaits times a hide from now. A
+    /// change that does not wait drops one held before it (a later switch-on wins).</summary>
+    private bool HoldsRenderer(bool on, string how) {
+        NoteDeath();
+        var now = Time.unscaledTime;
+        if (_hideCameAt == null && (on || !_isControlled ||
+                                    HideWaits.Due(CopyAlive(), CopyHurt(), _seenDeadAt, now, RoundTripS()) <= now)) {
+            _heldRendererOn = null;
+            _rendererCameAt = null;
+            return false;
+        }
+
+        _heldRendererOn = on;
+        if (_hideCameAt == null) _rendererCameAt ??= now;
+        Logger.Debug($"(coop) renderer of {Object.Client?.name} held with its {(_hideCameAt != null ? "hide" : "death")} " +
+                     $"({how})");
+        return true;
+    }
+
+    private void NoteDeath() {
+        // its scripted death puts its health at 0 at once and marks it dead only later, in its animation (wasp_drop
+        // --lag 50 friend first: hidden at 0 health in the frame its death came)
+        if (_seenDeadAt == null && _followedDeath != null && (_followedDeath.isDead || _followedDeath.hp <= 0))
+            _seenDeadAt = Time.unscaledTime;
+    }
+
+    private bool CopyAlive() => _followedDeath != null && !_followedDeath.isDead && _followedDeath.hp > 0;
+
+    private bool CopyHurt() => _followedDeath != null && _followedDeath.hp < _followedStartHp;
+
+    private float RoundTripS() => _netClient.UpdateManager.AverageRtt / 1000f;
 
     /// <summary>
     /// Updates generic data for the client entity.
@@ -2058,6 +2377,12 @@ internal class Entity {
                 if (action is SpawnObjectFromGlobalPool &&
                     LateSpawns.Skips(late, data.Packet.PeekByte(6 * sizeof(float)), Thrown != null)) continue;
 
+                // (coop) the copy's own renderer turned by its FSM waits with a hide that waits for its death, or a
+                // switch-off for that death (HoldsRenderer)
+                if (_followedDeath != null && action is SetMeshRenderer setMesh &&
+                    setMesh.Fsm.GetOwnerDefaultTarget(setMesh.gameObject) == Object.Client &&
+                    HoldsRenderer(setMesh.active.Value, "action")) continue;
+
                 EntityFsmActions.ApplyNetworkDataFromAction(data, action);
                 KeepCopyStill();
 
@@ -2069,6 +2394,17 @@ internal class Entity {
                     }
                 }
 
+                continue;
+            }
+
+            // (coop) a renderer update of a copy that follows its death waits with its hide, or a switch-off for its
+            // death (HoldsRenderer)
+            // shortcut: the mesh renderer only (the Wasp's); hold the sprite renderer too if a sprite copy goes undrawn
+            if (_followedDeath != null && data.Type == EntityComponentType.MeshRenderer) {
+                var on = data.Packet.ReadBool();
+                if (!HoldsRenderer(on, "update") &&
+                    _components.TryGetValue(EntityComponentType.MeshRenderer, out var meshComponent) &&
+                    meshComponent is MeshRendererComponent mesh) mesh.SetEnabled(on);
                 continue;
             }
 

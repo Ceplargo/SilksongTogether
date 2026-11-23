@@ -69,15 +69,23 @@ internal class MeshRendererComponent : EntityComponent {
     }
 
     /// <inheritdoc />
-    public override void Update(EntityNetworkData data, bool alreadyInSceneUpdate) {
-        var enabled = data.Packet.ReadBool();
+    public override void Update(EntityNetworkData data, bool alreadyInSceneUpdate) => SetEnabled(data.Packet.ReadBool());
 
+    /// <summary>(coop) Sets both renderers' enabled: an update's, or one Entity held with a hide that waited.</summary>
+    internal void SetEnabled(bool enabled) {
         if (_meshRenderer.Host != null) {
             _meshRenderer.Host.enabled = enabled;
         }
 
         if (_meshRenderer.Client != null) {
             _meshRenderer.Client.enabled = enabled;
+        }
+    }
+
+    /// <summary>(coop, 0.4) A taken-over original drawn as its copy was (TakeoverStates.Drawn).</summary>
+    internal void DrawAsCopy() {
+        if (_meshRenderer.Host != null && _meshRenderer.Client != null) {
+            _meshRenderer.Host.enabled = TakeoverStates.Drawn(_meshRenderer.Client.enabled, _meshRenderer.Host.enabled);
         }
     }
 

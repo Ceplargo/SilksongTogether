@@ -35,6 +35,19 @@ public class LocalTrapsTests {
         Assert.False(LocalTraps.Echoes("Control", "bone_plat_02_crumble (6)", "Break", "CRUMBLE"));
     }
 
+    // 0.4 Stage 2's check: Bone_East_20's Wind Rock (8) struck in one game only (the doer's copy's swing there, the
+    // doer's own swing missing in its own) stayed whole in the doer's game, Idle with the arrived saved value. Its
+    // Control is the explode wall's sequence under other names: STRIKE passes Set PD into Strike inside one frame
+    [Fact]
+    public void A_wind_rock_struck_tells_the_room_its_strike() {
+        Assert.Equal("STRIKE", LocalTraps.Sets("Control", "Wind Rock (8)", "Idle", "Strike"));
+        Assert.Equal("STRIKE", LocalTraps.Sets("Control", "Wind Rock (8)", "Idle", "Set PD"));
+        Assert.Null(LocalTraps.Sets("Control", "Wind Rock (8)", "Set PD", "Strike"));
+        Assert.Equal("STRIKE S", LocalTraps.Sets("Control", "Wind Rock (10)", "Idle", "Rumble S"));
+        Assert.True(LocalTraps.Echoes("Control", "Wind Rock (8)", "Idle", "STRIKE"));
+        Assert.False(LocalTraps.Echoes("Control", "Wind Rock (8)", "Rumble", "STRIKE"));
+    }
+
     [Fact]
     public void Other_objects_and_moves_tell_nobody() {
         Assert.Null(LocalTraps.Sets("Control", "Bone Beast", "Idle", "Strike"));
@@ -182,5 +195,115 @@ public class LocalTrapsTests {
         Assert.True(LocalTraps.ToEveryone("Trap:" + word));
         Assert.False(LocalTraps.ToEveryone("Trap:Jail Scene 1/jail_door (1)|BREAK"));
         Assert.False(LocalTraps.ToEveryone("Bell:" + word));
+    }
+
+    // 0.4 world, 3a A's lag pass: Bone_01b's Pilgrim trip wires (and Mosstown_02's, Chapel_Wanderer's) snapped in the
+    // walker's game only: there its spikes rose and killed, the other game's wire stayed Idle and its spikes Dormant
+    // (3a-lag-host-p3, 3a-lag-hostff-p3). A wire's Idle takes a hero's trigger box, enemies' and its Enemy Detector's,
+    // never the other player's copy (Default layer); its Cam Checks cancel a wire out of that game's camera, so another
+    // game's wire is set to Snap directly, which sends its trap folder TRAP. Snap's way on (Cog Audio) is no new word.
+    [Fact]
+    public void A_pilgrim_trap_wire_snapped_tells_the_room_its_snap() {
+        Assert.Equal("@Snap", LocalTraps.Sets("Control", "Pilgrim Trap Wire", "Touch", "Snap"));
+        Assert.Equal("@Snap", LocalTraps.Sets("Control", "Pilgrim Trap Wire (1)", "Cam Check 2", "Snap"));
+        Assert.Null(LocalTraps.Sets("Control", "Pilgrim Trap Wire (1)", "Snap", "Cog Audio"));
+        Assert.Null(LocalTraps.Sets("Control", "Pilgrim Trap Wire", "Idle", "Cam Check"));
+        // the spikes are each game's own wire's: its Snap sends them TRAP
+        Assert.Null(LocalTraps.Sets("Control", "Pilgrim Trap Spike (2)", "Dormant", "End"));
+        Assert.True(LocalTraps.Echoes("Control", "Pilgrim Trap Wire (5)", "Idle", "@Snap"));
+        Assert.False(LocalTraps.Echoes("Control", "Pilgrim Trap Wire (5)", "Cog Audio", "@Snap"));
+    }
+
+    // 0.4 world Task 8: Hunter's March trap plates (Ant_04, Ant_04_left, Ant_20, Bone_East_17b, Bone_East_18,
+    // Bone_East_18b) fired in the stepping player's game only: there its sickle swung or its cage came down, and the
+    // other game's plate stayed Idle (Task 3's sweep, NOTES 518). A plate's Idle takes a hero's trigger only; its
+    // Cam Check cancels a plate out of that game's camera, so another game's plate is set to Step directly.
+    [Fact]
+    public void A_trap_plate_stepped_on_tells_the_room_its_step() {
+        Assert.Equal("@Step", LocalTraps.Sets("Control", "Hunter Trap Plate (1)", "Idle", "Step"));
+        Assert.Equal("@Step", LocalTraps.Sets("Control", "Hunter Trap Plate", "Cam Check", "Step"));
+        Assert.Null(LocalTraps.Sets("Control", "Hunter Trap Plate (10)", "Step", "Activate Device"));
+        Assert.Null(LocalTraps.Sets("Control", "Hunter Trap Plate (10)", "Reset Timer", "Wait For Hero Clear"));
+        // a one-shot plate saved down goes to Activated as its room loads: no step
+        Assert.Null(LocalTraps.Sets("Control", "Hunter Trap Plate (2)", "Idle", "Activated"));
+        // the sickle a plate swings is the plate's device: each game's own plate sends it ACTIVATE
+        Assert.Null(LocalTraps.Sets("Control", "Hunter Sickle Trap (3)", "Idle", "Pre Delay"));
+    }
+
+    // 0.4 world (Task 11's bells, the project's ruling): Belltown_04's Drop Bell drops on DROP, which its alert
+    // range sends for a player in it (or on TINKED), then waits 8 s in Reset Pause; a copy the other game never saw in
+    // its range left that game's bell up while the doer's was down, the two cycles out of step (NOTES 534's trace).
+    // The arena's DropBell (no space) is its boss's.
+    [Fact]
+    public void A_drop_bell_dropped_in_one_game_drops_the_other_games_still_up() {
+        Assert.Equal("DROP", LocalTraps.Sets("Control", "Drop Bell (2)", "Idle", "Drop Antic"));
+        Assert.Null(LocalTraps.Sets("Control", "Drop Bell (2)", "Drop Antic", "Drop Start"));
+        Assert.Null(LocalTraps.Sets("Control", "Drop Bell", "Emerge To Ready", "Idle"));
+        Assert.True(LocalTraps.Echoes("Control", "Drop Bell (2)", "Idle", "DROP"));
+        Assert.False(LocalTraps.Echoes("Control", "Drop Bell (2)", "Reset Pause", "DROP"));
+        Assert.False(LocalTraps.Echoes("Control", "Drop Bell (2)", "Dropping", "DROP"));
+        Assert.Null(LocalTraps.Sets("Control", "DropBell 1", "Idle", "Drop Antic"));
+    }
+
+    // 0.4 world (3b A, the project's ruling on the Lava Challenge's door): its floor, struck by one hero
+    // (explode_floor_battle's STRIKE), explodes and registers BATTLE FLOOR EXPLODE, which wakes the Rising Lava; the
+    // other game's floor was never struck, so its lava stayed Hidden, never rose, never sent its END's LAVA CHALLENGE
+    // COMPLETE, and that game's entrance door stayed shut after the win (lavadoorend2-p3, both orders)
+    [Fact]
+    public void The_lava_challenges_floor_struck_in_one_game_explodes_in_the_others() {
+        Assert.Equal("STRIKE", LocalTraps.Sets("Control", "explode_floor_battle", "Idle", "Strike"));
+        Assert.True(LocalTraps.Echoes("Control", "explode_floor_battle", "Idle", "STRIKE"));
+        Assert.False(LocalTraps.Echoes("Control", "explode_floor_battle", "Rumble", "STRIKE"));
+        Assert.Null(LocalTraps.Sets("Control", "explode_floor_battle", "Strike", "Rumble"));
+    }
+
+    [Fact]
+    public void Another_games_step_presses_only_a_plate_still_up() {
+        Assert.True(LocalTraps.Echoes("Control", "Hunter Trap Plate (4)", "Idle", "@Step"));
+        Assert.False(LocalTraps.Echoes("Control", "Hunter Trap Plate (4)", "Reset Timer", "@Step"));
+        Assert.False(LocalTraps.Echoes("Control", "Hunter Trap Plate (4)", "Wait For Hero Clear", "@Step"));
+        Assert.False(LocalTraps.Echoes("Control", "Hunter Trap Plate (2)", "Activated", "@Step"));
+        Assert.Equal("Step", LocalTraps.StateOf("@Step"));
+    }
+
+    // A plate's cage comes down in each game whose plate stepped (its own hero caught if in range, else empty with its
+    // Terrain), and 4 hits within 15 units break it: told, so a cage either player breaks lets the caught one out in
+    // both games, and no game keeps a shut cage's solid.
+    [Fact]
+    public void A_trap_cage_broken_tells_the_room_its_break() {
+        Assert.Equal("@Break", LocalTraps.Sets("Control", "Hunter Trap Cage (1)", "Hit", "Break"));
+        Assert.Equal("@Break", LocalTraps.Sets("Control", "Hunter Trap Cage", "Idle", "Break"));
+        Assert.Null(LocalTraps.Sets("Control", "Hunter Trap Cage", "Init", "Activated"));
+        Assert.Null(LocalTraps.Sets("Control", "Hunter Trap Cage", "Range Check", "Miss"));
+        Assert.True(LocalTraps.Echoes("Control", "Hunter Trap Cage (1)", "Idle", "@Break"));
+        Assert.True(LocalTraps.Echoes("Control", "Hunter Trap Cage (1)", "Hit", "@Break"));
+        // a cage not come down in this game (its plate not stepped here) stays as it is
+        Assert.False(LocalTraps.Echoes("Control", "Hunter Trap Cage (1)", "Init", "@Break"));
+        Assert.False(LocalTraps.Echoes("Control", "Hunter Trap Cage (1)", "Activated", "@Break"));
+    }
+
+    // 0.4 world Task 7 Step 2: Dock_03's ambush went off in the doer's game alone (probe_t7_gates, 2026-11-17 03:51):
+    // there its roof exploded and its two enemies woke and attacked; the other game's stayed Idle, its roof solid and
+    // its enemies off. Its Idle takes a hero's trigger only (ENTER -> Explode, then Bomber Entry wakes the enemies).
+    [Fact]
+    public void An_ambush_walked_into_tells_the_room() {
+        Assert.Equal("ENTER", LocalTraps.Sets("Control", "Dock Bomber Ambush", "Idle", "Explode"));
+        Assert.Null(LocalTraps.Sets("Control", "Dock Bomber Ambush", "Explode", "Bomber Entry"));
+        Assert.Null(LocalTraps.Sets("Control", "Dock Bomber Ambush", "Wait", "Idle"));
+        Assert.True(LocalTraps.Echoes("Control", "Dock Bomber Ambush", "Idle", "ENTER"));
+        // one already gone off (or waiting out its start) stays as it is
+        Assert.False(LocalTraps.Echoes("Control", "Dock Bomber Ambush", "Bomber Entry", "ENTER"));
+        Assert.False(LocalTraps.Echoes("Control", "Dock Bomber Ambush", "Wait", "ENTER"));
+    }
+
+    // 0.4 world Task 7 Step 2: Dock_15's steam door opened in the presser's game alone (probe_t7_gates, 2026-11-17):
+    // its TempPressurePlate (a component, no FSM) fires Activated, which opens its TempGate, in the game whose own
+    // hero stood on it. A plate tells the room at the end of its drop (PreActivate, gateOpenDelay before Activate,
+    // so each game's door opens together), when it is still up in this game and the room's word did not drop it.
+    [Fact]
+    public void A_pressure_plate_pressed_here_tells_the_room() {
+        Assert.True(LocalTraps.PlateTells(false, false));
+        Assert.False(LocalTraps.PlateTells(false, true));
+        Assert.False(LocalTraps.PlateTells(true, false));
     }
 }

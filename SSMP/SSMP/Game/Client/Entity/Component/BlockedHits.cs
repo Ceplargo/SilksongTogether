@@ -75,6 +75,14 @@ internal static class BlockedHits {
     /// </summary>
     public static bool ReplaysEffectsOnly(bool blocking) => blocking && PlaysBlockedReplays();
 
+    /// <summary>
+    /// (0.4, enemies Task 7 Step 3) The stun a replayed landed hit still deals here when it plays as its effects only
+    /// (ReplaysEffectsOnly): the hit's own, as it stunned in the hitter's game (the game counts a hit's stun only in
+    /// HealthManager.TakeDamage, which effects only never runs); none otherwise (the game's own hit counts it).
+    /// Bone_16's Bone Crawler and Belltown_04's Bell Goomba lost a friend's hit's stun 1 in the scene host's game.
+    /// </summary>
+    public static float StunOf(bool effectsOnly, float stun) => effectsOnly && StunsBlockedReplays() ? stun : 0f;
+
     /// <summary>The switch blocked_hit_copy's twin turns off (a skipped bool method returns false): no block sent.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool SendsWorldBlocks() => true;
@@ -88,6 +96,11 @@ internal static class BlockedHits {
     /// for another player's hit).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool SendsPlayerBlocks() => true;
+
+    /// <summary>(0.4) The switch blocked_stun's twin turns off: a landed hit replayed as its effects only deals no
+    /// stun.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool StunsBlockedReplays() => true;
 
     /// <summary>The switch invincible_hit's twin turns off: a landed hit replayed while the enemy blocks plays as the
     /// game's hit, a block.</summary>

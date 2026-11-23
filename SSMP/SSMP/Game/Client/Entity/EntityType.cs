@@ -245,5 +245,6 @@ internal enum EntityType {
     LostLace,
     GrassBall,
     MossBoneCocoon,
-    ShellwoodHive
+    ShellwoodHive,
+    FlowerQueenSpike
 }

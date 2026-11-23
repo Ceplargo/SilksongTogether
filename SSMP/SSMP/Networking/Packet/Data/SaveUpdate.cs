@@ -35,11 +35,18 @@ internal class SaveUpdate : IPacketData {
     /// </summary>
     public string Claim { get; set; } = "";
 
+    /// <summary>
+    /// (coop, 0.4 World A) From the server: the answer to this player's own write of the index, Number its place in the
+    /// server's order (0: not ordered); its value is not applied (SaveOrder).
+    /// </summary>
+    public bool Own { get; set; }
+
     /// <inheritdoc />
     public void WriteData(IPacket packet) {
         packet.Write(SaveDataIndex);
         packet.Write(Number);
         packet.Write(Claim);
+        packet.Write(Own);
 
         if (Value.Length > ushort.MaxValue) {
             throw new Exception($"Number of bytes exceeds ushort max value: {Value.Length}");
@@ -57,6 +64,7 @@ internal class SaveUpdate : IPacketData {
         SaveDataIndex = packet.ReadUShort();
         Number = packet.ReadULong();
         Claim = packet.ReadString();
+        Own = packet.ReadBool();
 
         var length = packet.ReadUShort();
         Value = new byte[length];

@@ -30,4 +30,13 @@ internal static class ThrownCopies {
     /// <summary>(0.3.21) Not inlined: blast_follow's twin skips it, which gives false.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static bool AnimatesCopies() => true;
+
+    /// <summary>(0.4 enemies Task 5) Whether a boss's own object is out of sight here while SSMP's copy of the boss plays
+    /// the clip of the state that puts it away (the Last Judge's Catch): the clip comes ahead of the scene host's update
+    /// that ends the object, and the friend's censer showed two reads past her catch (censer_place).</summary>
+    internal static bool EndsOnCatch(string? playing, string catchClip) => playing == catchClip && EndsOnOwnCatch();
+
+    /// <summary>(0.4 enemies Task 5) Not inlined: censer_catch's twin skips it, which gives false.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool EndsOnOwnCatch() => true;
 }

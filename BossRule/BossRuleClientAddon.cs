@@ -110,12 +110,39 @@ internal class BossRuleClientAddon : ClientAddon {
         TrapFollow.Send = (scene, state) => SendFollow(scene, "", state);  // any room, as arena wins go
         BenchBells.Send = TrapFollow.Send;  // (0.3.21) a struck bench bell, to the room's other players
         ContactFollow.Send = TrapFollow.Send;  // (0.3.21) a box that brings things out, to the room's other players
-        HiddenAreas.Friends = () => clientApi.ClientManager.Players
-            .Where(p => p.IsInLocalScene && p.PlayerObject != null).Select(p => p.PlayerObject!);
+        PlateFollow.Send = TrapFollow.Send;  // (0.4) a pressure plate pressed (Dock_15's steam door), to the room's other players
+        ClockFollow.Send = TrapFollow.Send;  // (0.4 world Task 16) own-clock hazards' phases, to the room's other players
+        ClockFollow.SceneHost = () => _connected && clientApi.ClientManager.IsSceneHost; ClockFollow.Connected = () => _connected;
+        // the players, copied when their count changes and once a second (optimization, fix C: a foreach over the
+        // interface allocated each frame, mini PC job 32b)
+        var players = new List<IClientPlayer>();
+        var nextCopy = 0f;
+        HiddenAreas.Friends = into => {
+            var all = clientApi.ClientManager.Players;
+            if (all.Count != players.Count || Time.unscaledTime >= nextCopy) {
+                players.Clear();
+                players.AddRange(all);
+                nextCopy = Time.unscaledTime + 1f;
+            }
+            foreach (var p in players) {
+                if (p.IsInLocalScene && p.PlayerObject != null) into.Add(p.PlayerObject);
+            }
+        };
         PerformWake.Send = (scene, state) => SendFollow(scene, "", state);
+        HeroHides.Send = (scene, state) => SendFollow(scene, "", state);  // (0.4) this game's hero hidden or shown, to the room
+        HeroHides.Username = () => clientApi.ClientManager.Username;
+        HeroHides.PlayerObject = MultiHits.PlayerObject;
+        clientApi.ClientManager.PlayerEnterSceneEvent += _ => HeroHides.Joined();
+        clientApi.ClientManager.PlayerLeaveSceneEvent += player => HeroHides.Left(player.Username);
+        clientApi.ClientManager.PlayerDisconnectEvent += player => HeroHides.Left(player.Username);
         ArenaWins.SceneHost = MultiHits.SceneHost;
         ArenaWins.NotSceneHost = GroundBells.NotSceneHost;
         ArenaWins.CatalogRoom = scene => _bosses.Any(e => e.Scene == scene);
+        ArenaHold.Client = clientApi.ClientManager;
+        ArenaHold.SendStatus = (scene, message) =>
+            sender.SendSingleData(BossPacketId.WaitStatus, new WaitStatus { Scene = scene, Message = message });
+        LavaHold.Client = clientApi.ClientManager;
+        LavaHold.SendStatus = ArenaHold.SendStatus;
         receiver.RegisterPacketHandler<ArenaFollow>(BossPacketId.ArenaFollow, packet => {
             Debug.Log($"[BossRule] ArenaFollow received: {packet.State} ({packet.Scene})");
             // (0.3.21) another player's set state that keeps a game static (the Lech's wound): this game keeps it
@@ -137,6 +164,12 @@ internal class BossRuleClientAddon : ClientAddon {
             // the scene host's game won an ordinary arena: this game's ends too
             if (packet.State.StartsWith(ArenaWins.Prefix)) {
                 ArenaWins.Received(packet.Scene, packet.State.Substring(ArenaWins.Prefix.Length));
+                return;
+            }
+
+            // another game in the room started an ordinary arena by its own act: this game's starts too (the owner, 2026-11-20)
+            if (packet.State.StartsWith(ArenaStart.Prefix)) {
+                ArenaStarts.Received(packet.Scene, packet.State.Substring(ArenaStart.Prefix.Length));
                 return;
             }
 
@@ -164,6 +197,12 @@ internal class BossRuleClientAddon : ClientAddon {
                 return;
             }
 
+            // (0.4 world Task 16) an own-clock hazard's phase from the scene host's game, or another game's ask for it
+            if (packet.State.StartsWith(ClockFollow.Prefix)) {
+                ClockFollow.Echo(packet.State.Substring(ClockFollow.Prefix.Length));
+                return;
+            }
+
             // another player set off terrain there (a crumble, a boulder): this game's same object goes too
             if (packet.State.StartsWith(TrapFollow.Prefix)) {
                 TrapFollow.Echo(packet.State.Substring(TrapFollow.Prefix.Length));
@@ -177,6 +216,16 @@ internal class BossRuleClientAddon : ClientAddon {
             // another player's body set off a box that brings things out (Bone_10's Bone Crawler): this game's goes too
             if (packet.State.StartsWith(ContactFollow.Prefix)) {
                 ContactFollow.Echo(packet.State.Substring(ContactFollow.Prefix.Length));
+                return;
+            }
+            // another player pressed a pressure plate there (Dock_15's steam door): this game's goes down too
+            if (packet.State.StartsWith(PlateFollow.Prefix)) {
+                PlateFollow.Echo(packet.State.Substring(PlateFollow.Prefix.Length));
+                return;
+            }
+            // (0.4) another player's hero hidden or shown in its game: its copy here the same
+            if (packet.State.StartsWith(HeroHide.Prefix)) {
+                HeroHides.Echo(packet.State.Substring(HeroHide.Prefix.Length));
                 return;
             }
             if (packet.State.StartsWith(PerformWake.Prefix)) {
@@ -313,13 +362,18 @@ internal class BossRuleClientAddon : ClientAddon {
         GroundBells.Tick();
         MultiHits.Tick();
         ArenaWins.Tick();
+        ArenaHold.Tick();
+        LavaHold.Tick();
+        ArenaGates.Tick();
         ArenaWaves.Tick();
         if (_connected) FreeStarts.Tick();
         if (_connected) TrapFollow.Tick();
+        if (_connected) ClockFollow.Tick();
         if (_connected) BenchBells.Tick();
         HiddenAreas.Tick(_connected);
         if (_connected) TollFollow.Tick();
         if (_connected) PerformWake.Tick();
+        if (_connected) HeroHides.Tick();
     }
 
     /// <summary>

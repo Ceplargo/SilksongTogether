@@ -22,6 +22,22 @@ public class QuestRewardsTests {
         Assert.False(QuestRewards.PaysOthers("CurrencyCollectable", "Money Reward", unique: true));
     }
 
+    // (0.4 World B) Ant_04_left's string held a Rosary_Set_Medium: the host's take paid the host 1, the friend None
+    // (b-holder2-p2.log, 2026-11-19); the project: pay every player, as a quest's rosary set
+    [Fact]
+    public void A_rosary_set_taken_from_a_saved_world_pickup_is_paid_in_each_other_game() {
+        Assert.True(QuestRewards.PaysOthersPickup("Rosary_Set_Medium", saved: true));
+        Assert.True(QuestRewards.PaysOthersPickup("Rosary_Set_Large", saved: true));
+    }
+
+    // a pickup with no saved flag (an enemy's drop) is each player's own on their own screen (the money decision)
+    [Fact]
+    public void An_unsaved_pickup_or_another_item_pays_no_one_else() {
+        Assert.False(QuestRewards.PaysOthersPickup("Rosary_Set_Medium", saved: false));
+        Assert.False(QuestRewards.PaysOthersPickup("Heart Piece", saved: true));
+        Assert.False(QuestRewards.PaysOthersPickup(null, saved: true));
+    }
+
     [Fact]
     public void A_quest_with_no_reward_pays_nothing() => Assert.False(QuestRewards.PaysOthers(null, null, unique: false));
 

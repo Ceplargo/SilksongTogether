@@ -107,9 +107,20 @@ internal sealed class StartGate {
             _followedBattle = _battle;
             _followedScene = scene;
             _battle.StartBattle();
-        } else if (_fsm != null && _states.Contains(_fsm.ActiveStateName) &&
-                   (_entry.Start.Event ?? "").Split('|')[0] is { Length: > 0 } start) {
-            _fsm.SendEvent(start);
+        } else {
+            if (_fsm != null && _states.Contains(_fsm.ActiveStateName) &&
+                (_entry.Start.Event ?? "").Split('|')[0] is { Length: > 0 } start) {
+                _fsm.SendEvent(start);
+            }
+
+            // (0.4 world, 3b A) a wave arena its boss's own FSM starts (Bone_East_25's resting guard wakes, then its
+            // Battle Scene): here the boss is SSMP's copy, whose FSM never wakes, so the arena never started in this
+            // game (arena25-p3: "started: the host's at 0.6 s, the friend's never") and the win had none to end
+            if (BossArena(scene) is { } arena && !BattleStarted(arena) && !BattleCompleted(arena)) {
+                _followedBattle = arena;
+                _followedScene = scene;
+                arena.StartBattle();
+            }
         }
 
         Debug.Log($"[BossRule] The fight with {_entry?.Boss ?? flag} is on in the scene host's game: this arena follows");
@@ -176,6 +187,12 @@ internal sealed class StartGate {
 
     internal static readonly AccessTools.FieldRef<BattleScene, bool> BattleCompleted =
         AccessTools.FieldRefAccess<BattleScene, bool>("completed");
+
+    /// <summary>The room's wave arena that holds the entry's boss among its waves (Bone_East_25's Battle Scene/Wave 1/Bone
+    /// Hunter Throw), or null.</summary>
+    private BattleScene? BossArena(string scene) => _entry == null ? null : UnityEngine.Object
+        .FindObjectsByType<BattleScene>(FindObjectsSortMode.None)
+        .FirstOrDefault(b => InRoom(b, scene) && b.GetComponentsInChildren<Transform>(true).Any(t => t.name == _entry.Boss));
 
     /// <summary>The room's own scene or one of its additive scenes (its boss scene: Bone_East_08_boss_golem).</summary>
     private static bool InRoom(Component c, string scene) =>

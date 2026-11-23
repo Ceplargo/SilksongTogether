@@ -88,6 +88,15 @@ internal abstract class UpdateManager<TOutgoing, TPacketId>
     private ushort _localSequence;
 
     /// <summary>
+    /// (coop, ResendRules.Flat) By sequence: whether the packet sent under it was acked.
+    /// </summary>
+    private readonly bool[] _arrived = new bool[ushort.MaxValue + 1];
+
+    /// <summary>(coop, ResendRules.DropsOldThrows) The number each entity's thrown objects last went out under;
+    /// read and written under <see cref="Lock"/>.</summary>
+    private readonly LatestThrows _latestThrows = new();
+
+    /// <summary>
     /// The last received sequence number.
     /// </summary>
     private ushort _remoteSequence;
@@ -322,11 +331,25 @@ internal abstract class UpdateManager<TOutgoing, TPacketId>
                 PopulateAckField();
             }
 
-            try {
-                CurrentUpdatePacket.CreatePacket(rawPacket);
-            } catch (Exception e) {
-                Logger.Error($"Failed to create packet: {e}");
+            // (coop, ResendRules) an update too big to send goes without its resends, or is left out
+            if (!ResendRules.Built(
+                    CurrentUpdatePacket,
+                    p => {
+                        rawPacket = new Packet.Packet();
+                        p.CreatePacket(rawPacket);
+                    },
+                    p => p.DropResendData(),
+                    m => Logger.Error(m)
+                )) {
+                if (ResendRules.Recovers()) {
+                    CurrentUpdatePacket = new TOutgoing();
+                }
+
                 return;
+            }
+
+            foreach (var entity in CurrentUpdatePacket.ThrownEntities()) {
+                _latestThrows.Note(entity, _localSequence);
             }
 
             // Reset the packet by creating a new instance,
@@ -339,6 +362,7 @@ internal abstract class UpdateManager<TOutgoing, TPacketId>
         }
 
         // Track send time for RTT measurement (all transports)
+        _arrived[_localSequence] = false;
         _rttTracker?.OnSendPacket(_localSequence);
 
         // Transports requiring sequencing: reliability and sequence increment
@@ -416,7 +440,35 @@ internal abstract class UpdateManager<TOutgoing, TPacketId>
     /// Notifies RTT tracker and reliability manager that an ACK was received for the given sequence.
     /// </summary>
     /// <param name="sequence">The acknowledged sequence number.</param>
+    /// <summary>
+    /// (coop, ResendRules.Flat) A packet judged lost was acked after all: what it carried need not go again.
+    /// </summary>
+    /// <param name="packet">The packet acked late.</param>
+    public void OnLateAck(TOutgoing packet) {
+        if (!ResendRules.Flat()) {
+            return;
+        }
+
+        lock (Lock) {
+            CurrentUpdatePacket.DropArrived(packet);
+        }
+    }
+
+    /// <summary>
+    /// (coop, ResendRules.Flat) Whether the packet sent under this sequence was acked: what it carried need not go
+    /// again.
+    /// </summary>
+    protected bool Arrived(ushort sequence) => _arrived[sequence];
+
+    /// <summary>
+    /// (coop, ResendRules.DropsOldThrows) Whether a newer update of this entity's thrown objects went out after this
+    /// packet number (called under <see cref="Lock"/>).
+    /// </summary>
+    protected bool OldThrows(ushort entity, ushort sequence) =>
+        ResendRules.DropsOldThrows() && _latestThrows.Superseded(entity, sequence);
+
     private void NotifyAckReceived(ushort sequence) {
+        _arrived[sequence] = true;
         _rttTracker?.OnAckReceived(sequence);
         _reliabilityManager?.OnAckReceived(sequence);
     }
@@ -431,6 +483,8 @@ internal abstract class UpdateManager<TOutgoing, TPacketId>
             _receivedSequences?.Clear();
             _localSequence = 0;
             _remoteSequence = 0;
+            Array.Clear(_arrived, 0, _arrived.Length);
+            _latestThrows.Clear();
             CurrentUpdatePacket = new TOutgoing();
 
             _rttTracker?.Reset();

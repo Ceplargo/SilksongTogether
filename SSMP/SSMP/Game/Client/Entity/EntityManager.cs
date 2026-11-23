@@ -104,6 +104,8 @@ internal class EntityManager {
         MusicComponent.RegisterHooks();
         // (coop, 0.3.23) a room's random child pick leaves out SSMP's copies (Crawl_03's Crypt Worms)
         RandomChildPicks.Register();
+        // (coop, 0.4 enemies) a pool object whose room unloaded ends at its own recycle (the Widow's lone slash)
+        PoolLeftovers.Register();
 
         EntityFsmActions.EntitySpawnEvent += OnGameObjectSpawned;
         SceneManager.sceneLoaded += OnSceneLoaded;
@@ -125,6 +127,7 @@ internal class EntityManager {
         FsmActionHooks.DeregisterHooks();
         MusicComponent.DeregisterHooks();
         RandomChildPicks.Deregister();
+        PoolLeftovers.Deregister();
 
         EntityFsmActions.EntitySpawnEvent -= OnGameObjectSpawned;
         SceneManager.sceneLoaded -= OnSceneLoaded;
@@ -371,9 +374,18 @@ internal class EntityManager {
         var activeScene = SceneManager.GetActiveScene().name;
 
         // Boss/boss-defeated scenes share a name prefix with the base scene; skip unrelated additively-loaded scenes.
-        if (!scene.name.StartsWith(activeScene) || scene.name.Equals(activeScene)) return;
+        // (coop) and the room a move goes to, which can share it too (Shellwood_11b_Memory): it registers once active
+        var gm = global::GameManager.SilentInstance;
+        var moveTarget = gm != null && gm.IsInSceneTransition ? gm.nextSceneName : null;
+        if (!RoomParts.IsPart(scene.name, activeScene, moveTarget)) {
+            if (moveTarget == scene.name && scene.name.StartsWith(activeScene)) {
+                Logger.Info($"Scene {scene.name} loaded as the move's target, not a part of {activeScene}");
+            }
+            return;
+        }
 
-        Logger.Info($"Additional scene loaded ({scene.name}), looking for entities");
+        Logger.Info($"Additional scene loaded ({scene.name}), looking for entities (a part of {activeScene}; " +
+                    $"the move's target: {moveTarget ?? "none"})");
         FindEntitiesInScene(scene, lateLoad: true);
         DrainPendingUpdates();
     }
@@ -568,8 +580,15 @@ internal class EntityManager {
     private void ResolveStartupSpawns() {
         foreach (var spawn in _startupSpawns) {
             if (spawn.GameObject == null) continue;
-            if (IsSceneHost) OnGameObjectSpawned(spawn);
-            else Object.Destroy(spawn.GameObject);
+            if (IsSceneHost) {
+                OnGameObjectSpawned(spawn);
+                // (coop, 0.4) its FSM ran before this registration (EntitySpawnRules.SendsHeldSpawnWhole)
+                if (EntitySpawnRules.SendsHeldSpawnWhole()) {
+                    _entities.Values.FirstOrDefault(e => e.Object.Host == spawn.GameObject)?.SendsFsmWhole();
+                }
+            } else {
+                Object.Destroy(spawn.GameObject);
+            }
         }
         _startupSpawns.Clear();
     }

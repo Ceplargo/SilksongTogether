@@ -88,6 +88,19 @@ internal class ThrownComponent : EntityComponent {
     };
 
     /// <summary>
+    /// (coop, 0.4 enemies) Stage objects found from a scene root (GameObject.Find of the path), whose children with
+    /// names starting with the prefix are followed as StageFollowed's, never at rest: the Beastfly's arena platforms. Her
+    /// fight breaks them (PLAT BREAK: Break, the collider off, then Reform at a target place) in the scene host's game
+    /// alone: in 90 s of her fight the host's broke 39 times, the friend's twice, both at its start (probe_lava_plats).
+    /// Her tar shot copy then landed where the host's platform lay and found no surface under its Splat rays, broke by
+    /// itself, and took its burners 0.5 s before the host's (1 copy in 4 to 9, every order). Both sets break in her fight:
+    /// her own scene's and the Song Golem's (the same arena). Other rooms of her name have neither: Find gives null.
+    /// </summary>
+    private static readonly Dictionary<string, (string Path, string Prefix)[]> StageRoot = new() {
+        ["Bone Flyer Giant"] = [("/Boss Scene Beastfly/Lava Plats", "Song Golem Floor"), ("/Boss Scene/Lava Plats", "Song Golem Floor")]
+    };
+
+    /// <summary>
     /// (coop) Stage objects beside the enemy (children of its parent) whose names start with one of these, followed as
     /// StageFollowed's are: the Bell Beast's falling bells each pick where they fall and how they bounce at random and
     /// fall by their own physics, so the friend's were up to 16.4 units from the host's. With a rest state as
@@ -138,6 +151,9 @@ internal class ThrownComponent : EntityComponent {
     /// (coop) Every copy's enemy damager in this game: its hits reach props only (StageBreaks, GamePatcher's hook).
     /// </summary>
     internal static readonly HashSet<DamageEnemies> CopyBreakers = [];
+
+    /// <summary>(coop, 0.4 enemies) Other games: each followed copy by its FSMs, while it is followed (OwnRays).</summary>
+    private static readonly Dictionary<HutongGames.PlayMaker.Fsm, Copy> CopyFsms = new();
 
     private sealed class Followed {
         public readonly GameObject GameObject;
@@ -207,8 +223,20 @@ internal class ThrownComponent : EntityComponent {
         /// <summary>(coop, 0.3.21) Its culled Animators set to always animate while it is a copy (Culling).</summary>
         public readonly List<Animator> Animating = [];
 
+        /// <summary>(coop, 0.4 enemies) When this copy was made (game time): one that never gets an update ends.</summary>
+        public readonly float Made;
+
+        /// <summary>(coop, 0.4 enemies) HoldsLanded: whether its solid body has flown dynamic since it last rested; where
+        /// it rests since its own FSM made that body kinematic, and the update in hand then; whether that rest has ended
+        /// (it follows as before until it flies again).</summary>
+        public bool Flew;
+        public Vector2? RestsAt;
+        public float RestUpdate;
+        public bool Unheld;
+
         public Copy(GameObject gameObject) {
             GameObject = gameObject;
+            Made = UnityEngine.Time.time;
             Fsms = FsmsOf(gameObject);
             Parts = PartsOf(gameObject);
             Damagers = gameObject.GetComponentsInChildren<DamageHero>(true);
@@ -224,6 +252,10 @@ internal class ThrownComponent : EntityComponent {
             Given = new byte[Fsms.Length];
             for (var i = 0; i < Given.Length; i++) {
                 Given[i] = NoState;
+            }
+
+            foreach (var fsm in Fsms) {
+                if (fsm != null) CopyFsms[fsm.Fsm] = this;
             }
         }
     }
@@ -297,6 +329,18 @@ internal class ThrownComponent : EntityComponent {
     private readonly Dictionary<byte, (GameObject GameObject, bool LetGo, bool Waits)> _copySide = new();
 
     /// <summary>
+    /// (coop, 0.4 enemies Task 5) A boss's own object put away by the state whose clip this is: here it goes as SSMP's
+    /// copy of the boss plays the clip (<see cref="ThrownCopies.EndsOnCatch"/>), not a frame or more later with the
+    /// scene host's update.
+    /// </summary>
+    private static readonly Dictionary<string, (string Name, string Clip)> CaughtBy = new() {
+        ["Last Judge"] = ("Censer Throw", "Catch")
+    };
+
+    /// <summary>(coop, CaughtBy) Each such object's number: the copy of the boss's animator, and the clip.</summary>
+    private readonly Dictionary<byte, (tk2dSpriteAnimator Animator, string Clip)> _caught = new();
+
+    /// <summary>
     /// (coop) Other games: a boss's other objects of an own object's name, kept off (HidesStrays).
     /// </summary>
     private readonly Dictionary<byte, GameObject[]> _strays = new();
@@ -329,6 +373,13 @@ internal class ThrownComponent : EntityComponent {
     private readonly Dictionary<Rigidbody2D, float> _carried = new();
 
     private readonly List<Rigidbody2D> _stopped = [];
+
+    /// <summary>
+    /// (coop, 0.4 enemies) The bodies of copies waiting at their prediction's end this frame: stopped at each physics step
+    /// too, or a copy's own FSM, setting its speed each frame, carried it a frame's flight off its place between them
+    /// (the Phantom's pin, 0.9 units back and forth in a 1 s freeze of the host's game; throw_freeze).
+    /// </summary>
+    private readonly HashSet<Rigidbody2D> _waiting = [];
 
     /// <summary>
     /// (coop) Other games: the game time of the latest placement (<see cref="OnLateUpdate"/>); a carried body placed
@@ -364,6 +415,8 @@ internal class ThrownComponent : EntityComponent {
 
     private static MonoMod.RuntimeDetour.Hook? _fireballUpdateHook;
 
+    private static MonoMod.RuntimeDetour.Hook? _noneTrueHook;
+
     private static readonly System.Reflection.FieldInfo? FireballActive =
         typeof(FireballProjectile).GetField("isActive", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
 
@@ -385,6 +438,16 @@ internal class ThrownComponent : EntityComponent {
     /// <summary>(coop) The throws whose copy here ended itself (switched off, not taken away by its parent).</summary>
     private readonly HashSet<byte> _endedItself = [];
 
+    /// <summary>(coop, 0.4 enemies) Scene host: the numbers it pruned, each with the updates left that name it
+    /// (ThrownSends.Say).</summary>
+    private readonly Dictionary<byte, int> _pruned = new();
+
+    private readonly List<byte> _saying = [];
+
+    /// <summary>(coop, 0.4 enemies) Other games: the copies let go (left out of an update while still out), each with
+    /// its number and when; each ends by itself (ThrownPrediction.EndsLetGo).</summary>
+    private readonly List<(byte Number, GameObject GameObject, float Since)> _letGo = [];
+
     public ThrownComponent(
         NetClient netClient,
         ushort entityId,
@@ -395,6 +458,10 @@ internal class ThrownComponent : EntityComponent {
         MonoBehaviourUtil.Instance.OnFixedUpdateEvent += OnFixedUpdate;
         if (_fireballUpdateHook == null && typeof(FireballProjectile).GetMethod("Update", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) is { } update) {
             _fireballUpdateHook = new MonoMod.RuntimeDetour.Hook(update, FireballUpdate);
+        }
+
+        if (_noneTrueHook == null && typeof(BoolNoneTrue).GetMethod("DoNoneTrue", BindingFlags.Instance | BindingFlags.NonPublic) is { } none) {
+            _noneTrueHook = new MonoMod.RuntimeDetour.Hook(none, OwnRays);
         }
 
         var original = gameObject.Host;
@@ -439,6 +506,18 @@ internal class ThrownComponent : EntityComponent {
             }
         }
 
+        foreach (var (path, prefix) in StageRoot.TryGetValue(original.name, out var rooted) && FollowsLavaPlats() ? rooted : []) {
+            if (UnityEngine.GameObject.Find(path) is not { } stage) {
+                continue;
+            }
+
+            foreach (Transform child in stage.transform) {
+                if (child.name.StartsWith(prefix) && !AddStage(child, [], null, ref number)) {
+                    return;
+                }
+            }
+        }
+
         foreach (var (name, letGo) in StageOwn.TryGetValue(original.name, out var own) ? own : []) {
             if (OwnObject(original, name) is not { } hostOwn) {
                 Logger.Info($"No own object '{name}' of '{original.name}' to follow");
@@ -452,6 +531,11 @@ internal class ThrownComponent : EntityComponent {
 
             if (gameObject.Client != null && OwnObject(gameObject.Client, name) is { } copyOwn) {
                 _copySide[key] = (copyOwn, letGo, false);
+                if (CaughtBy.TryGetValue(original.name, out var caughtBy) && caughtBy.Name == name &&
+                    gameObject.Client.GetComponent<tk2dSpriteAnimator>() is { } animator) {
+                    _caught[key] = (animator, caughtBy.Clip);
+                }
+
                 _strays[key] = System.Array.FindAll(
                     [hostOwn, .. Named(original, name), .. Named(gameObject.Client, name)],
                     other => other != copyOwn);
@@ -529,6 +613,20 @@ internal class ThrownComponent : EntityComponent {
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static bool FollowsSummonCages() => true;
+
+    /// <summary>
+    /// (coop, 0.4 enemies) Whether the Beastfly's arena platforms are followed (StageRoot). Not inlined: lava_plats'
+    /// twin skips it, which gives false.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool FollowsLavaPlats() => true;
+
+    /// <summary>
+    /// (coop, 0.4 enemies) Whether a copy that its own FSM has landed rests where it landed (Rests). Not inlined:
+    /// tar_rest's twin skips it, which gives false.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool HoldsLanded() => true;
 
     /// <summary>
     /// (coop) Whether an object its enemy holds is kept from being predicted past the copy that catches it
@@ -764,6 +862,7 @@ internal class ThrownComponent : EntityComponent {
 
         // Numbers 1 up to the stage's in turn; 0 is not followed
         _lastNumber = (byte) (_lastNumber % (FirstStageNumber - 1) + 1);
+        _pruned.Remove(_lastNumber); // (coop, 0.4 enemies) its new object is not the pruned one
         _followed[_lastNumber] = new Followed(spawned) { Spawner = (fsm, state, action) };
         _changed = true;
         return _lastNumber;
@@ -808,9 +907,18 @@ internal class ThrownComponent : EntityComponent {
             return;
         }
 
+        // (coop, 0.4 enemies Task 3 Step 5) one fallen far below its room, or flown far past a side, ends too
+        var prunes = ThrownSends.Prunes();
+        var width = prunes && global::GameManager.instance != null ? global::GameManager.instance.sceneWidth : 0f;
         foreach (var (number, followed) in _followed) {
             if (followed.GameObject == null || !followed.GameObject.activeInHierarchy) {
                 _ended.Add(number);
+            } else if (prunes && width > 0f) {
+                var at = followed.GameObject.transform.position;
+                if (!ThrownSends.Matters(at.x, at.y, width)) {
+                    _ended.Add(number);
+                    if (ThrownSends.SaysPruned()) _pruned[number] = ThrownSends.PrunedSends;
+                }
             }
         }
 
@@ -852,7 +960,7 @@ internal class ThrownComponent : EntityComponent {
         }
 
         // An update leaves out what has ended, so one goes out at once after a spawn or an end
-        if (!_changed && (_followed.Count + _stageFollowed.Count == 0 || now - _lastSend < SendInterval)) {
+        if (!_changed && (_followed.Count + _stageFollowed.Count + _pruned.Count == 0 || now - _lastSend < SendInterval)) {
             return;
         }
 
@@ -860,14 +968,23 @@ internal class ThrownComponent : EntityComponent {
             Type = EntityComponentType.Thrown
         };
         data.Packet.Write(_order++);
-        data.Packet.Write((byte) (_followed.Count + _stageFollowed.Count));
+        // (coop, ThrownSends.MaxSent) at most a byte's count: the spawned first, then the stage's
+        var sent = System.Math.Min(_followed.Count + _stageFollowed.Count, ThrownSends.MaxSent);
+        data.Packet.Write((byte) sent);
         foreach (var (number, followed) in _followed) {
+            if (sent-- <= 0) break;
             Write(data, number, followed, now);
         }
 
         foreach (var (number, followed) in _stageFollowed) {
+            if (sent-- <= 0) break;
             Write(data, number, followed, now);
         }
+
+        // (coop, 0.4 enemies) the numbers it pruned, so the other games end their copies (ThrownSends.SaysPruned)
+        ThrownSends.Say(_pruned, _saying);
+        data.Packet.Write((byte) _saying.Count);
+        foreach (var number in _saying) data.Packet.Write(number);
 
         foreach (var number in _stage.Keys) {
             _stageSentOut[number] = _stageFollowed.ContainsKey(number);
@@ -879,11 +996,59 @@ internal class ThrownComponent : EntityComponent {
     }
 
     /// <summary>
+    /// (coop, 0.4 enemies) Where the other games show a copy <paramref name="age"/> s past an update, and where the
+    /// scene host's game reckons they do (<see cref="ThrownPrediction"/>): with a dynamic body, falling as its body
+    /// does; otherwise on its last speed no further than MaxError past the update.
+    /// </summary>
+    private static Vector2 Predicted(GameObject gameObject, Vector2 position, Vector2 velocity, float age) {
+        if (!ThrownPrediction.FollowsFlight()) {
+            return position + velocity * age;
+        }
+
+        if (Falls(gameObject, out var gravityScale)) {
+            var (x, y) = ThrownPrediction.Predict(position.x, position.y, velocity.x, velocity.y, gravityScale,
+                Physics2D.gravity.y, age);
+            return new Vector2(x, y);
+        }
+
+        var (hx, hy) = ThrownPrediction.Held(position.x, position.y, velocity.x, velocity.y, age, MaxError);
+        return new Vector2(hx, hy);
+    }
+
+    /// <summary>
+    /// (coop, 0.4 enemies) The speed a copy's body gets <paramref name="age"/> s past an update: falling as its body
+    /// does, so it flies on from there as the scene host's did once the prediction ends.
+    /// </summary>
+    private static Vector2 PredictedSpeed(GameObject gameObject, Vector2 velocity, float age) {
+        if (!ThrownPrediction.FollowsFlight() || !Falls(gameObject, out var gravityScale)) {
+            return velocity;
+        }
+
+        var (vx, vy) = ThrownPrediction.Speed(velocity.x, velocity.y, gravityScale, Physics2D.gravity.y, age);
+        return new Vector2(vx, vy);
+    }
+
+    /// <summary>
+    /// (coop, 0.4 enemies) Whether an object has a dynamic body, and its gravity scale.
+    /// </summary>
+    private static bool Falls(GameObject gameObject, out float gravityScale) {
+        gravityScale = 0f;
+        if (gameObject == null || !gameObject.TryGetComponent<Rigidbody2D>(out var body) ||
+            body.bodyType != RigidbodyType2D.Dynamic) {
+            return false;
+        }
+
+        gravityScale = body.gravityScale;
+        return true;
+    }
+
+    /// <summary>
     /// Whether the other games' prediction for a followed object is more than MaxError off now, or one of its FSMs
     /// has entered another state since the last send.
     /// </summary>
     private static bool Drifted(Followed followed, float now) {
-        var predicted = followed.Position + followed.Velocity * Mathf.Min(now - followed.Time, MaxPrediction);
+        var predicted = Predicted(followed.GameObject, followed.Position, followed.Velocity,
+            Mathf.Min(now - followed.Time, MaxPrediction));
         if (Vector2.Distance(predicted, followed.GameObject.transform.position) > MaxError) {
             return true;
         }
@@ -979,12 +1144,14 @@ internal class ThrownComponent : EntityComponent {
 
         _lastPlacing = Time.time;
         StageFollow();
+        EndLetGo();
         if (_copies.Count == 0) {
             return;
         }
 
         // The scene host's places are about half a round trip old when they arrive
         var lead = _netClient.UpdateManager.AverageRtt / 2000f;
+        _waiting.Clear();
         foreach (var (number, copy) in _copies) {
             if (copy.GameObject == null || !copy.GameObject.activeInHierarchy) {
                 if (copy.GameObject != null && !copy.GameObject.activeSelf) _endedItself.Add(number);
@@ -993,17 +1160,46 @@ internal class ThrownComponent : EntityComponent {
             }
 
             if (!_targets.TryGetValue(number, out var target)) {
+                // (coop, 0.4 enemies) a copy made by the scene host's spawn action whose object never came in an update
+                // (pruned before it was sent) is skipped each frame, and no update leaves it out: it ends as one let go
+                if (ThrownPrediction.EndsLetGo(Time.time - copy.Made - ThrownPrediction.MaxWait, InRoom(copy.GameObject))) {
+                    copy.GameObject.SetActive(false);
+                    _ended.Add(number);
+                }
+
                 continue;
             }
 
             var age = Time.time - target.Time + lead;
+            // (coop, 0.4 enemies) past the prediction a copy waits at its end for the next update, as the scene host's
+            // waits through a long frame: let fly on by its own body, the Widow's bell fell 29 units below hers in a
+            // 1 s freeze of the host's game, whose catch-up frame ran about 0.35 s of her fall (throw_freeze). Past
+            // ThrownPrediction.MaxWait it flies on by its own body again: one whose updates had stopped waited for good
+            var held = false;
             if (age > MaxPrediction) {
-                continue;
+                if (!ThrownPrediction.FollowsFlight() || ThrownPrediction.Releases(age - MaxPrediction)) {
+                    // (coop, 0.4 enemies) one released ends by itself too; an update for it again makes a new copy
+                    if (ThrownPrediction.EndsLetGo(age - MaxPrediction - ThrownPrediction.MaxWait, InRoom(copy.GameObject))) {
+                        copy.GameObject.SetActive(false);
+                        _ended.Add(number);
+                    }
+
+                    continue;
+                }
+
+                age = MaxPrediction;
+                held = true;
             }
 
             FollowsParts(copy, target.Parts);
             FollowsDamage(copy, target.Damages, target.EnemyDamages);
-            var position = target.Position + target.Velocity * age;
+            if (Rests(copy, target)) {
+                copy.SolidBody!.linearVelocity = Vector2.zero;
+                _waiting.Add(copy.SolidBody);
+                continue;
+            }
+
+            var position = Predicted(copy.GameObject, target.Position, target.Velocity, age);
             var transform = copy.GameObject.transform;
             // (coop) a prediction into the ground stops at the scene host's own last place: checked from the copy's place
             // instead, a sickle past the corner of the Vampire Gnat's right wall was refused every frame and flew on by
@@ -1018,7 +1214,11 @@ internal class ThrownComponent : EntityComponent {
                 transform.localScale = new Vector3(target.Scale.x, target.Scale.y, transform.localScale.z);
             }
             if (copy.GameObject.TryGetComponent<Rigidbody2D>(out var body)) {
-                body.linearVelocity = target.Velocity;
+                body.linearVelocity = held ? Vector2.zero : PredictedSpeed(copy.GameObject, target.Velocity, age);
+                if (held) {
+                    _waiting.Add(body);
+                }
+
                 _carried[body] = Time.time;
             }
         }
@@ -1048,6 +1248,10 @@ internal class ThrownComponent : EntityComponent {
     /// <summary>(coop, 0.3.21) A copy that ends gives its Animators their own modes back (the pool's next use of
     /// them may be this game's own).</summary>
     private static void GiveBack(Copy copy) {
+        foreach (var fsm in copy.Fsms) {
+            if (fsm != null && CopyFsms.TryGetValue(fsm.Fsm, out var held) && held == copy) CopyFsms.Remove(fsm.Fsm);
+        }
+
         CorpseFuse.Release(copy.GameObject, hostsWent: false); // (coop, 0.3.23) a held corpse keeps its own fuse again
         foreach (var animator in copy.Animating) {
             if (Culling.Release(animator, out var mode) && animator != null) animator.cullingMode = mode;
@@ -1068,7 +1272,14 @@ internal class ThrownComponent : EntityComponent {
     private void OnFixedUpdate() {
         if (!IsControlled) {
             _carried.Clear();
+            _waiting.Clear();
             return;
+        }
+
+        foreach (var body in _waiting) {
+            if (body != null) {
+                body.linearVelocity = Vector2.zero;
+            }
         }
 
         foreach (var (body, placedAt) in _carried) {
@@ -1085,6 +1296,68 @@ internal class ThrownComponent : EntityComponent {
         }
 
         _stopped.Clear();
+    }
+
+    /// <summary>
+    /// (coop, 0.4 enemies) Whether a landed copy's own surface check is the scene host's (OwnRays). Not inlined:
+    /// tar_rays' twin skips it, which gives false.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool HostsLandedRays() => true;
+
+    /// <summary>
+    /// (coop, 0.4 enemies) Other games: a followed copy that its own FSM has landed does not run its own BoolNoneTrue
+    /// (ThrownPrediction.RaysHeld): the Beastfly's tar shot in Splat breaks when its four rays find no surface, and the
+    /// copy, landed a little apart from the scene host's, broke at once where the host's rested 1.75 s (the boss
+    /// sweep's forced attacks: 2 of about 110 landings in the friend's game, its fire then about half a second short;
+    /// 2 others in the host's game alone, which the copy follows as its state). Its Break comes from the scene host.
+    /// </summary>
+    private static void OwnRays(System.Action<BoolNoneTrue> orig, BoolNoneTrue self) {
+        if (self.Fsm != null && CopyFsms.TryGetValue(self.Fsm, out var copy) && HostsLandedRays() &&
+            copy.SolidBody is { } body && ThrownPrediction.RaysHeld(body.bodyType == RigidbodyType2D.Kinematic, copy.Flew)) {
+            return;
+        }
+
+        orig(self);
+    }
+
+    /// <summary>
+    /// (coop, 0.4 enemies) Whether a landed copy rests where it landed this frame. A solid copy whose body flew dynamic
+    /// and that its own FSM has made kinematic has landed (the Beastfly's tar shot in Splat). Followed on, the scene
+    /// host's update in hand still carried its fall: the follow took it up to 0.75 units into the floor, where its Splat
+    /// rays found no surface and it broke at once, 9 of 14 copies, while every host tar shot rested 1.75 s
+    /// (probe_tarshot_air). It rests, still, until an update newer than its landing ends that
+    /// (ThrownPrediction.HoldEnds), then follows as before until it flies again.
+    /// </summary>
+    private static bool Rests(Copy copy, Target target) {
+        if (copy.SolidBody is not { } body || !HoldsLanded()) {
+            return false;
+        }
+
+        if (body.bodyType == RigidbodyType2D.Dynamic) {
+            copy.Flew = true;
+            copy.RestsAt = null;
+            copy.Unheld = false;
+            return false;
+        }
+
+        if (!copy.Flew || copy.Unheld) {
+            return false;
+        }
+
+        if (copy.RestsAt is not { } at) {
+            copy.RestsAt = copy.GameObject.transform.position;
+            copy.RestUpdate = target.Time;
+            return true;
+        }
+
+        var away = target.Position - at;
+        if (ThrownPrediction.HoldEnds(target.Time > copy.RestUpdate, away.x, away.y, target.Velocity.x, target.Velocity.y)) {
+            copy.Unheld = true;
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -1119,6 +1392,12 @@ internal class ThrownComponent : EntityComponent {
 
             HidesStrays(number);
 
+            // (coop, CaughtBy) caught here by the copy of the boss before the scene host's word that it went
+            if (hostOut && _caught.TryGetValue(number, out var catcher) && catcher.Animator != null &&
+                ThrownCopies.EndsOnCatch(catcher.Animator.CurrentClip?.name, catcher.Clip)) {
+                hostOut = false;
+            }
+
             if (shown && gameObject.activeSelf != hostOut) {
                 gameObject.SetActive(hostOut);
                 if (!hostOut && _stage[number].AtRest != null) {
@@ -1152,7 +1431,7 @@ internal class ThrownComponent : EntityComponent {
             }
 
             var age = Mathf.Min(Time.time - target.Time + lead, MaxPrediction);
-            var position = target.Position + target.Velocity * age;
+            var position = Predicted(gameObject, target.Position, target.Velocity, age);
             var caught = false;
             if (own.Waits && GameObject.Client != null && StopsAtCatcher()) {
                 var x = CatchPoint.Shown(target.Position.x, position.x, GameObject.Client.transform.position.x);
@@ -1177,7 +1456,7 @@ internal class ThrownComponent : EntityComponent {
 
             // (coop) its body moves on as the host's between frames: a bell's own bounce moved its collider off
             if (!caught && gameObject.TryGetComponent<Rigidbody2D>(out var body)) {
-                body.linearVelocity = target.Velocity;
+                body.linearVelocity = PredictedSpeed(gameObject, target.Velocity, age);
                 _carried[body] = Time.time;
             }
 
@@ -1848,6 +2127,12 @@ internal class ThrownComponent : EntityComponent {
             }
         }
 
+        // (coop, 0.4 enemies) the copies of the objects the scene host pruned end here (ThrownSends.SaysPruned)
+        var pruned = data.Packet.ReadByte();
+        for (var i = 0; i < pruned; i++) {
+            EndPruned(data.Packet.ReadByte());
+        }
+
         // Every update says which stage objects are out in the scene host's game
         foreach (var number in _stage.Keys) {
             _stageOut[number] = _targets.TryGetValue(number, out var stageTarget) && InUpdate(stageTarget, stamp, now);
@@ -1868,6 +2153,7 @@ internal class ThrownComponent : EntityComponent {
             }
 
             if (copy != null && _targets.TryGetValue(number, out var last)) LetsPickupGo(copy, last);
+            if (copy?.GameObject != null && copy.GameObject.activeInHierarchy) _letGo.Add((number, copy.GameObject, now));
             _targets.Remove(number);
             if (_copies.TryGetValue(number, out var ending)) {
                 CorpseFuse.Release(ending.GameObject, hostsWent: true); // (coop, 0.3.23) the host's corpse went off
@@ -1887,6 +2173,41 @@ internal class ThrownComponent : EntityComponent {
     private static bool InUpdate(Target target, uint stamp, float now) =>
         CountsByUpdate() ? target.Stamp == stamp : target.Time == now;
 
+    /// <summary>(coop, 0.4 enemies) Other games: the copy of a number the scene host pruned ends now, followed or let go.</summary>
+    private void EndPruned(byte number) {
+        if (_copies.TryGetValue(number, out var copy) && copy.GameObject != null) copy.GameObject.SetActive(false);
+        for (var i = _letGo.Count - 1; i >= 0; i--) {
+            if (_letGo[i].Number != number) continue;
+            if (_letGo[i].GameObject != null) _letGo[i].GameObject.SetActive(false);
+            _letGo.RemoveAt(i);
+        }
+    }
+
+    /// <summary>(coop, 0.4 enemies) Other games: each copy let go that is out of its room or past
+    /// ThrownPrediction.LetGoLife ends; one that ended by itself is forgotten.</summary>
+    private void EndLetGo() {
+        var now = Time.time;
+        for (var i = _letGo.Count - 1; i >= 0; i--) {
+            var (_, gameObject, since) = _letGo[i];
+            if (gameObject == null || !gameObject.activeInHierarchy) {
+                _letGo.RemoveAt(i);
+            } else if (ThrownPrediction.EndsLetGo(now - since, InRoom(gameObject))) {
+                gameObject.SetActive(false);
+                _letGo.RemoveAt(i);
+            }
+        }
+    }
+
+    /// <summary>(coop, 0.4 enemies) Whether an object outlives its room (the pool's, in DontDestroyOnLoad).</summary>
+    private static bool Pooled(GameObject gameObject) => gameObject.scene.name == "DontDestroyOnLoad";
+
+    /// <summary>(coop, 0.4 enemies) Whether an object is where the scene host still sends its own (ThrownSends.Matters).</summary>
+    private static bool InRoom(GameObject gameObject) {
+        var width = global::GameManager.instance != null ? global::GameManager.instance.sceneWidth : 0f;
+        var at = gameObject.transform.position;
+        return width <= 0f || ThrownSends.Matters(at.x, at.y, width);
+    }
+
     /// <summary>
     /// (coop) Whether an update knows the targets it named by its own number rather than by the frame's time: two
     /// handled in one frame (the scene host's "out" and then "gone") kept the first's out, so the friend's censer, caught
@@ -1899,6 +2220,19 @@ internal class ThrownComponent : EntityComponent {
     /// <inheritdoc />
     public override void Destroy() {
         foreach (var copy in _copies.Values) GiveBack(copy); // its room unloads
+        // (coop, 0.4 enemies) a pooled copy (DontDestroyOnLoad) outlives its room: followed no more, it would fly on by
+        // itself through the next rooms, as the Widow's bell copy that rose on did
+        if (ThrownPrediction.EndsLetGoCopies()) {
+            foreach (var copy in _copies.Values) {
+                if (copy.GameObject != null && copy.GameObject.activeSelf && Pooled(copy.GameObject)) copy.GameObject.SetActive(false);
+            }
+
+            foreach (var (_, gameObject, _) in _letGo) {
+                if (gameObject != null && Pooled(gameObject)) gameObject.SetActive(false);
+            }
+        }
+
+        _letGo.Clear();
         Flinging.Remove(this);
         MonoBehaviourUtil.Instance.OnLateUpdateEvent -= OnLateUpdate;
         MonoBehaviourUtil.Instance.OnFixedUpdateEvent -= OnFixedUpdate;

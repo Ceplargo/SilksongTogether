@@ -1,5 +1,3 @@
-using System.Linq;
-
 namespace BossRule;
 
 /// <summary>
@@ -16,8 +14,13 @@ internal static class PerformWakes {
     public const float Every = 1f;
 
     /// <summary>The boss of that room a performance wakes, if any.</summary>
-    public static (string Scene, string Boss, string Fsm, string Waits, string Event, string Range, float Radius)? In(string? scene) =>
-        Wakes.Where(w => w.Scene == scene).Cast<(string, string, string, string, string, string, float)?>().FirstOrDefault();
+    /// <remarks>Asked every frame: a loop, no LINQ (optimization, fix C).</remarks>
+    public static (string Scene, string Boss, string Fsm, string Waits, string Event, string Range, float Radius)? In(string? scene) {
+        foreach (var wake in Wakes) {
+            if (wake.Scene == scene) return wake;
+        }
+        return null;
+    }
 
     /// <summary>Whether this game tells the room: its own hero performs where the boss hears it (in its range, the
     /// performance reaching it), not within Every of the last time.</summary>

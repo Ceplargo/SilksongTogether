@@ -49,6 +49,10 @@ internal static class MultiHits {
     private static readonly List<Aimed> Swapped = [];
     private static readonly LateCatches<(PlayMakerFSM Fsm, string State)> Late = new();
     private static readonly List<PlayMakerFSM> Boxes = [];
+    // (coop, 0.4 enemies Task 7 Step 2) each catch tied to its own slash; the boxes out now in the scene host's game
+    private static readonly SlashTies Ties = new();
+    private static readonly HashSet<PlayMakerFSM> OutNow = [];
+    private static string? _heardScene;
     private static string? _boxesScene;
     private static GameObject? _standIn;
     private static GameObject? _player;
@@ -65,10 +69,13 @@ internal static class MultiHits {
         var wounder = Wounders.Contains(__instance.Fsm.Name);
         var tells = wounder && toOwner && Tells();
         var sent = tells && MultiHitPath.IsCopy(path);
+        // (coop, 0.4 enemies Task 7 Step 2) the slash of the scene host's box the copy's box came out with
+        var tie = sent ? Ties.Tie(MultiHitPath.Of(path), Time.unscaledTime) : "";
         // (coop) print only: each connect seen, so a catch this game never sent names its wounder (bosses Task 5)
         Debug.Log($"[BossRule] Connect by {__instance.Fsm.Name} at {path} in {__instance.State?.Name}: wounder {wounder}, " +
-                  $"to its own box {toOwner}, tells {tells}, copy {MultiHitPath.IsCopy(path)}, sent {sent}");
-        if (sent) Send?.Invoke(Prefix + MultiHitPath.Message(Username?.Invoke() ?? "", MultiHitPath.Of(path)));
+                  $"to its own box {toOwner}, tells {tells}, copy {MultiHitPath.IsCopy(path)}, sent {sent}" +
+                  (sent ? $", tie '{tie.Replace(SlashTies.Sep, ' ').Trim()}'" : ""));
+        if (sent) Send?.Invoke(Prefix + MultiHitPath.Message(Username?.Invoke() ?? "", MultiHitPath.Of(path)) + tie);
         // (coop) the scene host's own catch: a late one from another game must not start her multi slash again
         if (wounder && toOwner && SceneHost?.Invoke() == true && TakesConnects()) Late.Took(path, Time.unscaledTime);
     }
@@ -83,9 +90,32 @@ internal static class MultiHits {
     /// </summary>
     public static void Received(string message) {
         // (coop, 0.3.23) the sending game's freeze just before it sent: its catch is that much later here
-        var (plain, frozen) = MultiHitPath.Unstamp(message);
+        var (stamped, frozen) = MultiHitPath.Unstamp(message);
+        // (coop, 0.4 enemies Task 7 Step 2) the scene host's word for a box's new slash: a following game ties its
+        // catches by that box to it
+        if (SlashTies.ReadWord(stamped) is var (from, outPath, number)) {
+            if (NotSceneHost?.Invoke() != true) return;
+            Ties.Heard(from, outPath, number, Time.unscaledTime);
+            Debug.Log($"[BossRule] Multi Hit box out at {from}'s: {outPath}, slash {number}");
+            return;
+        }
+
+        var (plain, tiedBy, slash) = SlashTies.Untie(stamped);
         if (SceneHost?.Invoke() != true || MultiHitPath.Read(plain) is not var (player, named)) return;
         var grace = GracesFreeze() ? FrameGaps.Grace(frozen) : 0f;
+        // (coop, 0.4 enemies) print only: how long ago the named box was out here against how long the rule owes a catch
+        // (KeepS and the sending game's freeze, whatever GracesFreeze does) and how long it was kept
+        var since = Late.Since(named, Time.unscaledTime);
+        var kept = $"last out {(since == null ? "never" : $"{since:0.000} s ago")}, owed " +
+                   $"{LateCatches<int>.KeepS + FrameGaps.Grace(frozen):0.000} s, kept {LateCatches<int>.KeepS + grace:0.000} s";
+        // (coop, 0.4 enemies Task 7 Step 2) a catch of an earlier slash of that box (a lag spike, a hold): dropped, never
+        // honoured on her later slash
+        if (TiesCatches() && Ties.Same(named, Username?.Invoke() ?? "", tiedBy, slash) == false) {
+            Debug.Log($"[BossRule] Multi Hit from {player} by {named}: stale, its slash {slash} is not the box's latest " +
+                      $"here ({Ties.Latest(named)}); dropped ({kept}; its game frozen {frozen:0.000} s)");
+            return;
+        }
+
         var at = PlayerObject?.Invoke(player);
         var box = Object.FindObjectsByType<PlayMakerFSM>(FindObjectsSortMode.None).FirstOrDefault(f =>
             Wounders.Contains(f.FsmName) && f.isActiveAndEnabled && MultiHitPath.Names(PathOf(f.transform), named));
@@ -100,8 +130,8 @@ internal static class MultiHits {
                 done.Add($"{fsm.FsmName} to {state}");
             }
 
-            Debug.Log($"[BossRule] Multi Hit from {player} by {named}: its box went just before (its game frozen " +
-                      $"{frozen:0.000} s); {string.Join("; ", done)}");
+            Debug.Log($"[BossRule] Multi Hit from {player} by {named}: its box went just before ({kept}; its game " +
+                      $"frozen {frozen:0.000} s); {string.Join("; ", done)}");
             return;
         }
 
@@ -109,7 +139,7 @@ internal static class MultiHits {
             // (coop) under lag the catch can come after her move ended here (multi_hits' lag run, the Widow's charge)
             Debug.Log($"[BossRule] Multi Hit from {player} by {named}: " +
                       (box == null ? "no such box out here" : "that player is not in this room") +
-                      $" (its game frozen {frozen:0.000} s)");
+                      $" ({kept}; its game frozen {frozen:0.000} s)");
             return;
         }
 
@@ -131,6 +161,12 @@ internal static class MultiHits {
 
     /// <summary>Once per frame: the stand-in kept at its player, and each state's Hero given back once she left it.</summary>
     public static void Tick() {
+        var room = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (room != _heardScene) {
+            _heardScene = room;
+            Ties.ClearHeard();
+        }
+
         SeeBoxes();
         if (Swapped.Count == 0) return;
         if (_standIn != null && _player != null) _standIn.transform.position = _player.transform.position;
@@ -165,8 +201,22 @@ internal static class MultiHits {
                 .Where(f => Wounders.Contains(f.FsmName)));
         }
 
+        OutNow.RemoveWhere(b => b == null);
         foreach (var box in Boxes) {
-            if (box == null || !box.isActiveAndEnabled) continue;
+            if (box == null) continue;
+            if (!box.isActiveAndEnabled) {
+                OutNow.Remove(box);
+                continue;
+            }
+
+            if (OutNow.Add(box)) {
+                // (coop, 0.4 enemies Task 7 Step 2) the box's new slash, numbered and told to the room
+                var outPath = PathOf(box.transform);
+                var slash = Ties.Rose(outPath);
+                Send?.Invoke(Prefix + SlashTies.Word(Username?.Invoke() ?? "", outPath, slash));
+                Debug.Log($"[BossRule] Multi Hit box out: {outPath}, slash {slash}");
+            }
+
             var moves = new List<(PlayMakerFSM, string)>();
             var up = box.transform;
             for (var i = 0; i < 4 && up != null; i++, up = up.parent) {
@@ -197,6 +247,11 @@ internal static class MultiHits {
     /// freeze_catch's twin skips it.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool GracesFreeze() => true;
+
+    /// <summary>(coop, 0.4 enemies Task 7 Step 2) A catch of an earlier slash of its box is dropped. Not inlined:
+    /// stale_catch's twin skips it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool TiesCatches() => true;
 
     /// <summary>A catch that comes just after its box went is honoured. Not inlined: late_catch's twin skips it.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]

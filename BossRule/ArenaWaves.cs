@@ -32,11 +32,29 @@ internal static class ArenaWaves {
     /// <summary>The last wave this game started for each arena, its start being wave 0 (a following game).</summary>
     private static readonly Dictionary<string, int> Kicked = new();
 
+    /// <summary>The waves this game started while it followed the room (their BATTLE START reached no live enemy).</summary>
+    private static readonly HashSet<BattleWave> StartedFollowing = new();
+
+    /// <summary>The wave children's FSMs given their BATTLE START again since the takeover.</summary>
+    private static readonly HashSet<PlayMakerFSM> WokenAgain = new();
+
+    /// <summary>Until when the takeover's wave children are looked at (WakeLost).</summary>
+    private static float _wakeUntil = -1f;
+
     private static string? _room;
+
+    /// <summary>This game followed the room's arenas (it did not run the room) since it came into it.</summary>
+    private static bool _followed;
     private static float _nextSend, _nextLook;
 
-    /// <summary>Prefix on <c>BattleScene.StartBattle</c>: the scene host's game sends the arena's start (wave 0).</summary>
-    public static void StartBattlePrefix(BattleScene __instance) => SendWave(__instance, 0);
+    /// <summary>
+    /// Prefix on <c>BattleScene.StartBattle</c>: the scene host's game sends the arena's start (wave 0), unless an earlier
+    /// prefix held it (ArenaHold: an ordinary arena waits up to WaitRule.RoomWaitS for every hero in its room; World B,
+    /// 2026-11-20).
+    /// </summary>
+    public static void StartBattlePrefix(BattleScene __instance, bool __runOriginal) {
+        if (__runOriginal) SendWave(__instance, 0);
+    }
 
     /// <summary>Prefix on <c>BattleScene.StartWave</c>: the scene host's game sends each wave as it starts.</summary>
     public static void StartWavePrefix(BattleScene __instance, int waveNumber) {
@@ -71,7 +89,19 @@ internal static class ArenaWaves {
         var room = GameManager.SilentInstance?.sceneName;
         NewRoom(room);
         if (room == null || ArenaWins.CatalogRoom?.Invoke(room) != false) return;
-        if (ArenaWins.SceneHost?.Invoke() == true && Time.unscaledTime >= _nextSend) {
+        var sceneHost = ArenaWins.SceneHost?.Invoke() == true;
+        if (ArenaWave.TakesOver(_followed, sceneHost)) {
+            _followed = false;
+            ClearGone();
+            _wakeUntil = Time.unscaledTime + WakeS;
+            WokenAgain.Clear();
+        } else if (ArenaWins.NotSceneHost?.Invoke() == true) {
+            _followed = true;
+        }
+
+        if (sceneHost && Time.unscaledTime < _wakeUntil) WakeLost();
+
+        if (sceneHost && Time.unscaledTime >= _nextSend) {
             _nextSend = Time.unscaledTime + 1f;
             foreach (var battle in Object.FindObjectsByType<BattleScene>(FindObjectsSortMode.None)) {
                 if (battle.isActiveAndEnabled && StartGate.BattleStarted(battle) && !StartGate.BattleCompleted(battle)) {
@@ -107,6 +137,89 @@ internal static class ArenaWaves {
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool Follows() => true;
 
+    /// <summary>
+    /// The forced twin's switch (Ant_05b's lead rejoin): off, an arena taken over keeps the originals of the enemies the
+    /// room's runner killed in its waves, and never ends.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool ClearsGone() => true;
+
+    /// <summary>
+    /// (Ant_05b's lead rejoin; the project's ruling, 2026-11-20) This game has just taken the room over from the
+    /// game that ran it (its player quit). While it followed, the enemies the runner killed died here only as SSMP's
+    /// copies: their originals, hp 0 (SSMP sets it at the copy's death) and switched off at the takeover, stay children
+    /// of their waves, and an arena counts its waves' children to end a wave (BattleScene.DoCheckEnemiesNew). So with the
+    /// runner gone mid-wave, the wave never ended and its players stayed shut in (the old build too, held to wave 1: 3 of
+    /// 3, b-w1-old-*-p4.log). Each such original leaves its wave, as a death in the game destroys the enemy, and each
+    /// running arena counts again.
+    /// </summary>
+    private static void ClearGone() {
+        if (!ClearsGone()) return;
+        foreach (var battle in Object.FindObjectsByType<BattleScene>(FindObjectsSortMode.None)) {
+            if (!battle.isActiveAndEnabled || !StartGate.BattleStarted(battle) || StartGate.BattleCompleted(battle)) continue;
+            var gone = new List<string>();
+            foreach (var wave in battle.waves.Where(w => w != null)) {
+                foreach (var child in wave.transform.Cast<Transform>().ToList()) {
+                    var hm = child.GetComponent<HealthManager>();
+                    if (!ArenaWave.Gone(hm != null ? hm.hp : null)) continue;
+                    child.SetParent(null, true);
+                    gone.Add(child.name);
+                }
+            }
+
+            Debug.Log($"[BossRule] Took over the arena {PathOf(battle.transform)} at wave {battle.currentWave}: the runner's " +
+                      $"kills out of its waves ({string.Join(", ", gone)})");
+            if (gone.Count > 0) battle.CheckEnemies();
+        }
+    }
+
+    /// <summary>
+    /// Postfix on <c>BattleWave.WaveStarted</c>: a wave started while this game follows the room is kept (WakeLost). Its
+    /// BATTLE START went to SSMP's originals, switched off here, and was lost.
+    /// </summary>
+    public static void WaveStartedPostfix(BattleWave __instance) {
+        if (ArenaWins.NotSceneHost?.Invoke() != true) return;
+        StartedFollowing.Add(__instance);
+        Debug.Log($"[BossRule] A wave started while following: {PathOf(__instance.transform)}");
+    }
+
+    /// <summary>How long after the takeover a wave child that comes into its waiting state still gets its start (its
+    /// original's FSM may start from its first state as it is switched on: Init Pause waits a frame).</summary>
+    private const float WakeS = 1f;
+
+    /// <summary>
+    /// The switch the twin turns off (a skipped bool method returns false): a taken-over wave's children that lost their
+    /// start stay waiting.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool WakesLostStarts() => true;
+
+    /// <summary>
+    /// (Dock_08's lead rejoin, 0.4) The room's runner quit in its arena's first wave's start delay, before its own start
+    /// woke the wave's Dock Worker; this game, still following, started that wave itself and its BATTLE START went to
+    /// SSMP's switched-off original, so after the takeover the Dock Worker stayed in Battle Dormant (no renderer, no hurt
+    /// box) and its wave never ended (World B's arena pass; probe_wave_takeover: BATTLE START sent by hand woke it). Each
+    /// FSM of a child of a wave started while following whose state still waits for BATTLE START gets it, once, as
+    /// BattleWave.WaveStarted sends it.
+    /// </summary>
+    private static void WakeLost() {
+        if (!WakesLostStarts()) return;
+        foreach (var wave in StartedFollowing) {
+            if (wave == null) continue;
+            foreach (Transform child in wave.transform) {
+                foreach (var fsm in child.GetComponents<PlayMakerFSM>()) {
+                    var events = fsm.Fsm.ActiveState?.Transitions.Select(t => t.EventName) ?? Enumerable.Empty<string>();
+                    if (WokenAgain.Contains(fsm) || !ArenaWave.WakesAgain(true, events)) continue;
+                    WokenAgain.Add(fsm);
+                    var was = fsm.ActiveStateName;
+                    fsm.SendEvent(ArenaWave.BattleStart);
+                    Debug.Log($"[BossRule] Took over the wave {PathOf(wave.transform)}: its BATTLE START sent again to " +
+                              $"{child.name} {fsm.FsmName} (in {was}, now {fsm.ActiveStateName}; lost while following)");
+                }
+            }
+        }
+    }
+
     private static bool Following(BattleScene battle) {
         var room = GameManager.SilentInstance?.sceneName;
         return room != null && ArenaWins.NotSceneHost?.Invoke() == true && ArenaWins.CatalogRoom?.Invoke(room) == false &&
@@ -127,8 +240,12 @@ internal static class ArenaWaves {
     private static void NewRoom(string? room) {
         if (room == _room) return;
         _room = room;
+        _followed = false;
         HostWave.Clear();
         Kicked.Clear();
+        StartedFollowing.Clear();
+        WokenAgain.Clear();
+        _wakeUntil = -1f;
     }
 
     private static string PathOf(Transform t) => t.parent == null ? t.name : PathOf(t.parent) + "/" + t.name;

@@ -25,6 +25,9 @@ internal sealed class CutsceneFollower {
     // Set while this game's FSM goes to a state another game's entered, so that state is not sent back
     private static bool _following;
 
+    /// <summary>(0.4 world Task 17) A heart's reward held in a game that followed its run (MemoryReward).</summary>
+    internal static readonly MemoryReward Reward = new();
+
     private sealed class Watched {
         public CutsceneEntry Entry = null!;
         public PlayMakerFSM? Fsm;
@@ -50,6 +53,7 @@ internal sealed class CutsceneFollower {
         if (scene != _scene) {
             Stop();
             _scene = scene;
+            Reward.Moved(scene);
             if (scene == null) return;
             foreach (var entry in CutsceneCatalog.InRoom(_catalog, scene).Where(e => e.Follow && (!e.KeepsHero || FollowsRides()))) {
                 _watched.Add(new Watched { Entry = entry, Run = new CutsceneRun(entry.Start, entry.Skip) });
@@ -103,6 +107,22 @@ internal sealed class CutsceneFollower {
         // an FSM off in this game (the opening's, once this game's values say it played) never runs on to its end, so its
         // follow would hold this game's hero for good
         if (!fsm.isActiveAndEnabled) {
+            // (0.4 world Task 17 Step 4) a boss's memory: this game's FSM is SSMP's copy of a boss the scene host runs,
+            // so this game goes into the memory itself, by the scene change the leader's state makes (the Widow's)
+            if (CutsceneEnter.Due(entry?.Enter, state, fsm.isActiveAndEnabled) && !MidRoomChange() &&
+                GameManager.SilentInstance is { } gm) {
+                Debug.Log($"[BossRule] The cutscene {entry!.Name}: another game's {state} goes into " +
+                          $"{entry.Enter!.Scene} here too");
+                gm.BeginSceneTransition(new GameManager.SceneLoadInfo {
+                    SceneName = entry.Enter.Scene,
+                    EntryGateName = entry.Enter.Gate,
+                    EntryDelay = 0f,
+                    Visualization = GameManager.SceneLoadVisualizations.Default,
+                    PreventCameraFadeOut = false
+                });
+                return;
+            }
+
             Debug.Log($"[BossRule] The cutscene {fsm.gameObject.name} ({fsm.FsmName}) is off: {state} not followed");
             return;
         }
@@ -132,6 +152,7 @@ internal sealed class CutsceneFollower {
             // the setter's own walk up to it (a shrine's interaction) took that hero's control before the start: this
             // game's hero stops with it; the cutscene's end gives both back (the shrine's Set Finished)
             if (starting && !keepsHero && HeroController.SilentInstance is { } hero) hero.RelinquishControl();
+            if (starting && entry != null) Reward.Followed(entry);
             if (!keepsHero) CloseMessages();
             fsm.SetState(state);
         } finally {
@@ -163,6 +184,21 @@ internal sealed class CutsceneFollower {
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch (it then reads false)
     public static bool EndsAtRelease() => true;
+
+    /// <summary>
+    /// (0.4 world Task 17) HeroController.AddToMaxSilkRegen in a game that followed a heart's run into its memory: its
+    /// heart adds one as its hero comes back (Silk Heart Memory Return), on top of the leader's write that already came
+    /// (heart4: silkRegenMax 0 to 2 in both games, the game alone 0 to 1). Not added here; the leader's write brings it.
+    /// </summary>
+    public static bool RewardPrefix(int amount) {
+        if (Reward.Held is not { } held || !OneReward()) return true;
+        Debug.Log($"[BossRule] The cutscene {held}'s reward (silkRegenMax +{amount}) is its leader's: not added here");
+        return false;
+    }
+
+    /// <summary>Whether a followed heart's reward is its leader's alone (0.4 world Task 17).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)] // memory_follow's twin switches it off with a patch (it then reads false)
+    public static bool OneReward() => true;
 
     /// <summary>Whether the rides (keeps_hero: the Bellway's beast, the caravan) are followed (0.3.21).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // ride_follow's twin switches it off with a patch (it then reads false)
@@ -197,7 +233,7 @@ internal sealed class CutsceneFollower {
     /// <summary>The entry's FSM on the object at its path in this room, an active one first.</summary>
     private static PlayMakerFSM? Find(CutsceneEntry entry) {
         var name = entry.Object.Substring(entry.Object.LastIndexOf('/') + 1);
-        return UnityEngine.Object.FindObjectsByType<PlayMakerFSM>(FindObjectsInactive.Include, FindObjectsSortMode.None)
+        return RoomScan.All<PlayMakerFSM>(true)
             .Where(f => f.FsmName == entry.Fsm && f.gameObject.name == name && PathOf(f.transform) == entry.Object)
             .OrderByDescending(f => f.gameObject.activeInHierarchy)
             .FirstOrDefault();

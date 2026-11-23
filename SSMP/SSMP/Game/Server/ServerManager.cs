@@ -97,6 +97,9 @@ internal abstract class ServerManager : IServerManager {
     /// </summary>
     private ActionClaims _actionClaims = new();
 
+    // (coop, 0.4 World A) the server's order of the shared writes it kept: the last one's number (SaveOrder)
+    private ulong _saveOrder;
+
     /// <summary>
     /// This server run, new each time the server starts; a rejoining player's held save updates are only applied by
     /// the run they were sent to.
@@ -2049,7 +2052,9 @@ internal abstract class ServerManager : IServerManager {
             }
         }
 
-        ApplySaveUpdate(id, playerData.Username, playerData.AuthKey, playerData.IsSceneHost, packet);
+        var number = ApplySaveUpdate(id, playerData.Username, playerData.AuthKey, playerData.IsSceneHost, packet);
+        // (coop, 0.4 World A) the writer's answer: its write's place in the order, or 0 (SaveOrder)
+        _netServer.GetUpdateManagerForClient(id)?.SetSaveUpdate(packet.SaveDataIndex, [], number: number, own: true);
     }
 
     /// <summary>
@@ -2102,7 +2107,8 @@ internal abstract class ServerManager : IServerManager {
     /// <param name="authKey">The player's auth key.</param>
     /// <param name="sceneHost">Whether the player may send updates that need the scene host.</param>
     /// <param name="packet">The SaveUpdate packet data.</param>
-    private void ApplySaveUpdate(ushort id, string username, string authKey, bool sceneHost, SaveUpdate packet) {
+    /// <returns>(coop, 0.4 World A) The kept write's place in the server's order of shared writes, or 0.</returns>
+    private ulong ApplySaveUpdate(ushort id, string username, string authKey, bool sceneHost, SaveUpdate packet) {
         Logger.Info($"Save update from ({id}, {username}), index: {packet.SaveDataIndex}");
 
         // Find the properties for syncing this save update, based on whether it is a geo rock, player data or 
@@ -2113,7 +2119,7 @@ internal abstract class ServerManager : IServerManager {
             Logger.Debug($"  Found GeoRockData: {persistentItemData.Id}, {persistentItemData.SceneName}");
 
             if (!SaveDataMapping.Instance.GeoRockBools.TryGetValue(persistentItemData, out _)) {
-                return;
+                return 0;
             }
 
             varProps = new SaveDataMapping.VarProperties {
@@ -2125,7 +2131,7 @@ internal abstract class ServerManager : IServerManager {
             Logger.Debug($"  Found PlayerData: {pdVarName}");
 
             if (!SaveDataMapping.Instance.PlayerDataVarProperties.TryGetValue(pdVarName, out varProps)) {
-                return;
+                return 0;
             }
         } else if (SaveDataMapping.Instance.PersistentBoolIndices.TryGetValue(
                        packet.SaveDataIndex,
@@ -2135,7 +2141,7 @@ internal abstract class ServerManager : IServerManager {
             Logger.Debug($"  Found PersistentBoolData: {persistentItemData.Id}, {persistentItemData.SceneName}");
 
             if (!SaveDataMapping.Instance.PersistentBoolVarProperties.TryGetValue(persistentItemData, out varProps)) {
-                return;
+                return 0;
             }
         } else if (SaveDataMapping.Instance.PersistentIntIndices.TryGetValue(
                        packet.SaveDataIndex,
@@ -2145,11 +2151,11 @@ internal abstract class ServerManager : IServerManager {
             Logger.Debug($"  Found PersistentIntData: {persistentItemData.Id}, {persistentItemData.SceneName}");
 
             if (!SaveDataMapping.Instance.PersistentIntVarProperties.TryGetValue(persistentItemData, out varProps)) {
-                return;
+                return 0;
             }
         } else {
             Logger.Debug("  Could not find sync props for save update");
-            return;
+            return 0;
         }
 
         // (coop, 0.3.21) a game's semi-persistent reset (its death or bench rest) is every game's, scene host or not
@@ -2158,14 +2164,14 @@ internal abstract class ServerManager : IServerManager {
         // Check whether this save update requires the player to be scene host and do the check for it
         if (!varProps.IgnoreSceneHost && !sceneHost && !reset) {
             Logger.Debug("  Player is not scene host, but should be for update, not broadcasting");
-            return;
+            return 0;
         }
 
         // Validate and normalize the packet value by decoding and re-encoding it
         var normalizedValue = ValidateAndNormalizeSaveData(packet.SaveDataIndex, packet.Value, pdVarName);
         if (normalizedValue == null) {
             Logger.Warn($"Save update value validation failed for index {packet.SaveDataIndex}, rejecting update");
-            return;
+            return 0;
         }
 
         packet.Value = normalizedValue;
@@ -2199,7 +2205,7 @@ internal abstract class ServerManager : IServerManager {
                         );
                     }
 
-                    return;
+                    return 0;
                 }
             }
         }
@@ -2225,7 +2231,7 @@ internal abstract class ServerManager : IServerManager {
                 if (varProps.Additive) {
                     if (pdVarName == null) {
                         Logger.Debug("  Cannot decode value, name for variable is null");
-                        return;
+                        return 0;
                     }
 
                     object? decodedCurrentValue = null;
@@ -2270,7 +2276,7 @@ internal abstract class ServerManager : IServerManager {
                             decodedNewValue = decodedCurrentSet;
                         } else {
                             Logger.Debug($"  Type of decoded values did not match: {decodedCurrentValue.GetType()}");
-                            return;
+                            return 0;
                         }
 
                         packet.Value = EncodeUtil.EncodeSaveDataValue(decodedNewValue, pdVarName);
@@ -2286,6 +2292,9 @@ internal abstract class ServerManager : IServerManager {
                     ServerSaveData.GlobalSaveData[packet.SaveDataIndex] = packet.Value;
                 }
 
+                // (coop, 0.4 World A) a whole value's place in the one order, the server's arrival (an added value is
+                // the server's sum, sent to every game, so it needs none)
+                var number = varProps.Additive || reset ? 0UL : ++_saveOrder;
                 foreach (var idPlayerDataPair in _playerData) {
                     var otherId = idPlayerDataPair.Key;
                     // For additive properties, it might happen (due to race conditions) that the resulting value needs to
@@ -2294,10 +2303,14 @@ internal abstract class ServerManager : IServerManager {
                         continue;
                     }
 
-                    _netServer.GetUpdateManagerForClient(otherId)?.SetSaveUpdate(packet.SaveDataIndex, packet.Value);
+                    _netServer.GetUpdateManagerForClient(otherId)?.SetSaveUpdate(packet.SaveDataIndex, packet.Value, number: number);
                 }
+
+                return number;
             }
         }
+
+        return 0;
     }
 
     /// <summary>

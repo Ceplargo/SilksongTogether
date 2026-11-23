@@ -23,10 +23,11 @@ public class ChildActivationTests {
     }
 
     [Fact]
-    public void Only_the_Coral_Judge_requests_child_activation_snapshots() {
+    public void Only_the_Coral_Judge_and_the_Mite_Trap_request_child_activation_snapshots() {
+        // (coop, 0.4) the Mite Trap's sprung Phys (MiteTrapRegistryTests)
         using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "entity-registry.json")));
-        var entry = Assert.Single(json.RootElement.EnumerateArray().Where(e =>
-            e.TryGetProperty("components", out var parts) && parts.EnumerateArray().Any(c => c.GetString() == "ChildrenActivation")));
-        Assert.Equal("Judge", entry.GetProperty("type").GetString());
+        var entries = json.RootElement.EnumerateArray().Where(e =>
+            e.TryGetProperty("components", out var parts) && parts.EnumerateArray().Any(c => c.GetString() == "ChildrenActivation"));
+        Assert.Equal(["Coral Judge", "Mite Trap"], entries.Select(e => e.GetProperty("base_object_name").GetString()).Order());
     }
 }

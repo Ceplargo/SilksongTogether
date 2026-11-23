@@ -3294,6 +3294,19 @@
     ]
   },
   {
+    "base_object_name": "Mite Trap",
+    "type": "Mite",
+    "parent_name": null,
+    "components": [
+      "Rotation",
+      "ChildrenActivation"
+    ],
+    "internal_name": "Mite Trap",
+    "fsm_names": [
+      "Control"
+    ]
+  },
+  {
     "base_object_name": "Seth",
     "type": "ShrineGuardianSeth",
     "parent_name": null,
@@ -3336,5 +3349,13 @@
     "components": ["Rotation"],
     "internal_name": "Shellwood Hive",
     "fsm_names": ["Control", "DAMAGE EFFECTS"]
+  },
+  {
+    "base_object_name": "Flower Queen Spike",
+    "type": "FlowerQueenSpike",
+    "parent_name": "Spike Balls",
+    "components": ["Rotation"],
+    "internal_name": "Flower Queen Spike",
+    "fsm_names": ["Control"]
   }
 ]

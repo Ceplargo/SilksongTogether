@@ -1,3 +1,4 @@
+using SSMP.Game.Client.Entity;
 using SSMP.Game.Client.Entity.Component;
 using Xunit;
 
@@ -21,4 +22,15 @@ public class SpecialDeathTests {
     public void Only_the_kinds_that_follow_it_take_the_scripted_path(bool markedDead, bool scripted, bool overridden,
         bool regular) =>
         Assert.Equal(regular, SpecialDeath.UsesRegularPath(markedDead, scripted, overridden, false));
+
+    // (0.4 enemies, CRAWLSPACE) The Crypt Worm (Gromling): its scripted death flies, rolls and lands with its damaging
+    // body still on in the scene host's game; its copy follows it, or the friend's screen ended the box at the kill
+    [Fact]
+    public void The_crypt_worm_follows_its_scripted_death() => Assert.True(SpecialDeath.KindFollows(EntityType.Gromling));
+
+    [Fact]
+    public void The_wasp_still_follows_and_others_do_not() {
+        Assert.True(SpecialDeath.KindFollows(EntityType.WoodWasp));
+        Assert.False(SpecialDeath.KindFollows(EntityType.Widow));
+    }
 }

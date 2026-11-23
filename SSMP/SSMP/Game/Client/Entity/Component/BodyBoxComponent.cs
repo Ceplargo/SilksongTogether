@@ -37,6 +37,10 @@ internal class BodyBoxComponent : EntityComponent {
     private float[]? _lastSent;
     private float[]? _given;
 
+    /// <summary>The number of the next box this game sends, and the last one this copy applied (-1: none).</summary>
+    private ushort _seq;
+    private int _lastSeq = -1;
+
     public BodyBoxComponent(NetClient netClient, ushort entityId, HostClientPair<GameObject> gameObject)
         : base(netClient, entityId, gameObject) {
         MonoBehaviourUtil.Instance.OnLateUpdateEvent += OnLateUpdate;
@@ -62,6 +66,7 @@ internal class BodyBoxComponent : EntityComponent {
         if (!BodyBox.Changed(_lastSent, box)) return;
         _lastSent = box;
         var data = new EntityNetworkData { Type = EntityComponentType.BodyBox };
+        data.Packet.Write(_seq++);
         foreach (var value in box) data.Packet.Write(value);
         SendData(data);
     }
@@ -98,6 +103,7 @@ internal class BodyBoxComponent : EntityComponent {
 
     protected override void InitializeHost() {
         _lastSent = null;
+        _seq = 0;
         Unfollow();
     }
 
@@ -108,10 +114,19 @@ internal class BodyBoxComponent : EntityComponent {
         _given = null;
     }
 
+    /// <inheritdoc />
+    public override void InitializeClient(uint sceneHostEpoch) {
+        base.InitializeClient(sceneHostEpoch);
+        _lastSeq = -1;  // a new scene host numbers its boxes from 0
+    }
+
     public override void Update(EntityNetworkData data, bool alreadyInSceneUpdate) {
+        var seq = data.Packet.ReadUShort();
         var box = new float[6];
         for (var i = 0; i < box.Length; i++) box[i] = data.Packet.ReadFloat();
         if (!IsControlled) return;
+        if (BodyBox.DropsStale() && !BodyBox.Newer(_lastSeq, seq)) return;  // a resend that came after a newer box
+        _lastSeq = seq;
         _given = box;
         Apply();
     }

@@ -27,6 +27,10 @@ internal static class LocalTraps {
         ("Control", "Bone_Boulder", ["Idle", "Shake"], [("Drop Antic", "DROP")]),
         // a wall a hero strikes rumbles and explodes (Bone_07's Explode Sequence)
         ("Control", "explode_wall", ["Idle"], [("Strike", "STRIKE"), ("Set PD", "STRIKE S")]),
+        // (0.4 Stage 2's check) a Wind Rock: the same sequence under other names (Idle's STRIKE passes Set PD into
+        // Strike inside one frame; STRIKE S is a chain's Rumble S). Struck in one game only, the other stayed whole
+        // with the arrived saved value (Bone_East_20's Wind Rock (8), 3 orders; probe_fsm_dump)
+        ("Control", "Wind Rock", ["Idle"], [("Set PD", "STRIKE"), ("Strike", "STRIKE"), ("Rumble S", "STRIKE S")]),
         // a deposit each hit wears down until it breaks
         ("Control", "tool_metal_deposit", ["Idle"], [("Hit Register Event", "HIT"), ("Instant Break", "BREAK")]),
         // (0.3.21) a jail door three hits break (Bone_12): its Break lets its Jail Scene's prisoner out. Only the break
@@ -35,6 +39,28 @@ internal static class LocalTraps {
         // (0.3.21) Bone_10's Caravan Lech, wounded when its own hero comes back by the Spa Door: its Wounded State puts
         // the Lech away and its Wounded child out. No event leads there from Idle: "@" tells the state, set directly
         ("Dialogue", "Caravan Lech", ["Idle"], [("Wounded State", "@Wounded State")]),
+        // (0.4 world Task 8) Hunter's March trap plates: a hero's trigger steps one (Idle, Cam Check, Step), and its
+        // Activate Device sends its own device ACTIVATE (a sickle that swings, or a cage that comes down). Set directly:
+        // Cam Check cancels a plate out of the other game's camera (Bone_East_17b's and Bone_East_18's)
+        ("Control", "Hunter Trap Plate", ["Idle"], [("Step", "@Step")]),
+        // (0.4 world Task 8) the cage such a plate brings down, broken by 4 hits: told, so it opens in every game
+        ("Control", "Hunter Trap Cage", ["Idle", "Hit"], [("Break", "@Break")]),
+        // (0.4 world, 3a A's lag pass) The Marrow's Pilgrim trip wires (Bone_01b, Mosstown_02, Chapel_Wanderer): a
+        // hero's trigger box or an enemy snaps one (Idle, Cam Check, Touch, Snap; a hit: Cam Check 2, Snap), and its Snap
+        // sends its trap folder TRAP (spikes rise, a boulder drops). Set directly: its Cam Checks cancel a wire out of
+        // the other game's camera, and the other player's copy never snaps it
+        ("Control", "Pilgrim Trap Wire", ["Idle"], [("Snap", "@Snap")]),
+        // (0.4 world Task 7) Dock_03's ambush: a hero's trigger (Idle's ENTER) explodes its roof and its Bomber Entry
+        // wakes its two enemies (probe_t7_gates: the doer's game alone)
+        ("Control", "Dock Bomber Ambush", ["Idle"], [("Explode", "ENTER")]),
+        // (0.4 world, Task 11's bells) Belltown_04's Drop Bells: Idle's alert range (a player in it, copies too) or a
+        // hit (TINKED) drops one into Drop Antic; a copy one game never saw in its range left that game's bell up and
+        // the two 8 s cycles out of step. The Bellway arena's DropBell (no space) is its boss's
+        ("Control", "Drop Bell", ["Idle"], [("Drop Antic", "DROP")]),
+        // (0.4 world, 3b A) the Lava Challenge's floor: one hero's strike explodes it (Strike to Event Register, whose
+        // BATTLE FLOOR EXPLODE wakes the Rising Lava); left whole in the other game, its lava never rose nor ended, and
+        // its entrance door stayed shut after the win (lavadoorend2-p3)
+        ("Control", "explode_floor_battle", ["Idle"], [("Strike", "STRIKE")]),
     ];
 
     /// <summary>(0.3.21) The word a state-told kind ("@") going off in its set state tells the room: the Lech's Wounded
@@ -145,6 +171,11 @@ internal static class LocalTraps {
         now != null && (Resets.Any(r => r.Event == ev)
             ? Reset(fsm, name) is { } reset && reset.Event == ev && reset.From.Contains(now)
             : Kind(fsm, name) is { } kind && kind.Waits.Contains(now));
+
+    /// <summary>(0.4 world Task 7) Whether a TempPressurePlate's PreActivate (its drop's end) tells the room: it is not
+    /// down yet in this game (its Activate is gateOpenDelay away), and this game's own hero dropped it, not another
+    /// game's word (echoed).</summary>
+    public static bool PlateTells(bool down, bool echoed) => !down && !echoed;
 
     private static (string Fsm, string Name, string Event, string[] Into, string[] Leaves, string[] From)? Reset(
         string fsm, string name) => Resets.Where(r => r.Fsm == fsm && name.StartsWith(r.Name, StringComparison.Ordinal))

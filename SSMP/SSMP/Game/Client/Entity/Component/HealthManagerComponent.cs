@@ -731,9 +731,12 @@ internal class HealthManagerComponent : EntityComponent {
                 HitInstance.TargetType.Regular));
             if (BlockedHits.ReplaysEffectsOnly(healthManager.IsBlockingByDirection(way, hit.AttackType, hit.SpecialType))) {
                 healthManager.GetComponent<IHitEffectReciever>()?.ReceiveHitEffect(hit);
+                // (0.4) its stun, as it stunned in the hitter's game: the game counts it only in its own Hit
+                var stun = BlockedHits.StunOf(true, hit.StunDamage);
+                if (stun > 0f) healthManager.ApplyStunDamage(stun);
                 if (LogsHealth) {
                     Logger.Debug($"(coop) landed hit played as its effects, the enemy blocking: {healthManager.name}, " +
-                                 $"frame {Time.frameCount}");
+                                 $"frame {Time.frameCount}, stun {stun}");
                 }
 
                 continue;

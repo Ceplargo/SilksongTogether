@@ -14,11 +14,8 @@ namespace BossRule;
 /// here while it is open for another player and this game's own hero is outside it (<see cref="HiddenArea.HidesCover"/>).
 /// </summary>
 internal static class HiddenAreas {
-    // a room's masks come up with it and its additive scenes: looked for again every LookEvery
-    private const float LookEvery = 1.0f;
-
-    /// <summary>The bodies of the other players in this room; set by the client add-on.</summary>
-    public static Func<IEnumerable<GameObject>>? Friends;
+    /// <summary>Adds the bodies of the other players in this room to the list; set by the client add-on.</summary>
+    public static Action<List<GameObject>>? Friends;
 
     private static readonly AccessTools.FieldRef<Remasker, bool> BlackoutRef =
         AccessTools.FieldRefAccess<Remasker, bool>("blackoutMask");
@@ -33,40 +30,91 @@ internal static class HiddenAreas {
     private static readonly HashSet<SpriteRenderer> Hidden = [];
 
     private static string? _scene;
-    private static float _nextLook;
+    // the masks the game has enabled, each with its own areas, told by their OnEnable and OnDisable (optimization, fix C:
+    // a look for them every second took about 50 KB each time, mini PC job 32b); an Unmasker has no OnDisable, so a
+    // disabled one stays listed and is skipped, and the destroyed ones go at the next room
+    private static readonly Dictionary<Remasker, Collider2D[]> Enabled = new();
+    private static readonly Dictionary<Unmasker, Collider2D[]> EnabledUnmaskers = new();
+    private static bool _changed;
     private static Remasker[] _masks = [];
     private static Unmasker[] _unmaskers = [];
+    // the listed masks' copy that Tick walks (a mask enabled or disabled inside the walk changes only the list); and this frame's bodies (optimization, fix C: every frame built
+    // them anew, 111 MB in 15 minutes of the host's game and 127 of the friend's, mini PC job 28)
+    private static Collider2D[][] _maskAreas = [], _unmaskerAreas = [];
+    private static readonly List<GameObject> FriendObjects = [];
+    private static readonly List<BoxCollider2D> Bodies = [];
 
     /// <summary>Every frame: each mask uncovered for whoever else is inside it; none while not connected.</summary>
     public static void Tick(bool connected) {
         var scene = GameManager.SilentInstance?.sceneName;
-        if (scene != _scene || Time.unscaledTime >= _nextLook) {
-            if (scene != _scene) Hidden.RemoveWhere(sprite => !sprite);
-            _scene = scene;
-            _nextLook = Time.unscaledTime + LookEvery;
-            _masks = UnityEngine.Object.FindObjectsByType<Remasker>(FindObjectsSortMode.None);
-            _unmaskers = UnityEngine.Object.FindObjectsByType<Unmasker>(FindObjectsSortMode.None);
+        if (scene != _scene || _changed) Look(scene);
+
+        Bodies.Clear();
+        if (connected && Friends != null) {
+            FriendObjects.Clear();
+            Friends(FriendObjects);
+            foreach (var go in FriendObjects) {
+                var body = go ? go.GetComponent<BoxCollider2D>() : null;
+                if (body && body!.enabled) Bodies.Add(body);
+            }
         }
 
-        var bodies = connected && Friends != null
-            ? Friends().Select(go => go ? go.GetComponent<BoxCollider2D>() : null).Where(c => c && c!.enabled).ToList()
-            : [];
-        foreach (var unmasker in _unmaskers) {
-            if (unmasker && unmasker.isActiveAndEnabled && HiddenArea.OpenFor(false, Inside(unmasker, bodies))) {
+        for (var i = 0; i < _unmaskers.Length; i++) {
+            var unmasker = _unmaskers[i];
+            if (unmasker && unmasker.isActiveAndEnabled && HiddenArea.OpenFor(false, Inside(_unmaskerAreas[i]))) {
                 unmasker.Uncover();  // once: it does nothing when already uncovered
             }
         }
 
-        foreach (var mask in _masks) {
+        for (var i = 0; i < _masks.Length; i++) {
+            var mask = _masks[i];
             if (!mask) continue;
             var blackout = BlackoutRef(mask);
-            var open = HiddenArea.OpenFor(blackout, Inside(mask, bodies));
+            var open = HiddenArea.OpenFor(blackout, Inside(_maskAreas[i]));
             if (mask.ForceUncovered != open) {
                 Debug.Log($"[BossRule] Hidden area {(open ? "opened" : "left")} for another player: {mask.name} ({scene})");
                 mask.ForceUncovered = open;
             }
             if (blackout) Show(mask, !HiddenArea.HidesCover(true, open, InsideRef(mask)), scene);
         }
+    }
+
+    /// <summary>The game's masks tell this list when they are enabled and disabled.</summary>
+    public static void Apply(Harmony harmony) {
+        harmony.Patch(AccessTools.Method(typeof(Remasker), "OnEnable"),
+            postfix: new HarmonyMethod(typeof(HiddenAreas), nameof(MaskEnabled)));
+        harmony.Patch(AccessTools.Method(typeof(Remasker), "OnDisable"),
+            postfix: new HarmonyMethod(typeof(HiddenAreas), nameof(MaskDisabled)));
+        harmony.Patch(AccessTools.Method(typeof(Unmasker), "OnEnable"),
+            postfix: new HarmonyMethod(typeof(HiddenAreas), nameof(UnmaskerEnabled)));
+    }
+
+    private static void MaskEnabled(Remasker __instance) {
+        Enabled[__instance] = __instance.GetComponents<Collider2D>();
+        _changed = true;
+    }
+
+    private static void MaskDisabled(Remasker __instance) => _changed = Enabled.Remove(__instance) | _changed;
+
+    private static void UnmaskerEnabled(Unmasker __instance) {
+        EnabledUnmaskers[__instance] = __instance.GetComponents<Collider2D>();
+        _changed = true;
+    }
+
+    // the listed masks copied for Tick, after a room change or a mask enabled or disabled; its own method, so CoopQA
+    // allocs reads its cost apart (job 32)
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void Look(string? scene) {
+        if (scene != _scene) {
+            Hidden.RemoveWhere(sprite => !sprite);
+            foreach (var gone in EnabledUnmaskers.Keys.Where(unmasker => !unmasker).ToList()) EnabledUnmaskers.Remove(gone);
+        }
+        _scene = scene;
+        _changed = false;
+        _masks = [.. Enabled.Keys];
+        _maskAreas = [.. Enabled.Values];
+        _unmaskers = [.. EnabledUnmaskers.Keys];
+        _unmaskerAreas = [.. EnabledUnmaskers.Values];
     }
 
     // a blackout mask's cover sprites drawn or hidden; shown again only those this hid
@@ -85,6 +133,15 @@ internal static class HiddenAreas {
         if (changed) Debug.Log($"[BossRule] Blackout cover {(shown ? "shown" : "hidden")} for another player: {mask.name} ({scene})");
     }
 
-    private static bool Inside(Component mask, List<BoxCollider2D?> bodies) => bodies.Count > 0 && mask
-        .GetComponents<Collider2D>().Any(area => area.enabled && bodies.Any(body => Physics2D.Distance(area, body!).isOverlapped));
+    // whether another player's body overlaps one of a mask's enabled areas
+    private static bool Inside(Collider2D[] areas) {
+        if (Bodies.Count == 0) return false;
+        foreach (var area in areas) {
+            if (!area || !area.enabled) continue;
+            foreach (var body in Bodies) {
+                if (Physics2D.Distance(area, body).isOverlapped) return true;
+            }
+        }
+        return false;
+    }
 }

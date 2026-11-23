@@ -35,7 +35,7 @@ internal class ServerUpdateManager : UpdateManager<ClientUpdatePacket, ClientUpd
         }
 
         lock (Lock) {
-            CurrentUpdatePacket.SetLostReliableData(lostPacket);
+            CurrentUpdatePacket.SetLostReliableData(lostPacket, Arrived, OldThrows);
         }
     }
 
@@ -600,14 +600,18 @@ internal class ServerUpdateManager : UpdateManager<ClientUpdatePacket, ClientUpd
     /// <param name="index">The index of the save data entry.</param>
     /// <param name="value">The array of bytes that represents the changed value.</param>
     /// <param name="claim">(coop) The refused action this update answers with the server's value, or "".</param>
-    public void SetSaveUpdate(ushort index, byte[] value, string claim = "") {
+    /// <param name="number">(coop, 0.4 World A) Its place in the server's order of shared writes, or 0.</param>
+    /// <param name="own">(coop, 0.4 World A) The answer to the player's own write (SaveOrder).</param>
+    public void SetSaveUpdate(ushort index, byte[] value, string claim = "", ulong number = 0, bool own = false) {
         lock (Lock) {
             var saveUpdateCollection = GetOrCreateCollection<SaveUpdate>(ClientUpdatePacketId.SaveUpdate);
             saveUpdateCollection.DataInstances.Add(
                 new SaveUpdate {
                     SaveDataIndex = index,
                     Value = value,
-                    Claim = claim
+                    Claim = claim,
+                    Number = number,
+                    Own = own
                 }
             );
         }

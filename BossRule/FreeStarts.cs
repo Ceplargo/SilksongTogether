@@ -132,6 +132,6 @@ internal static class FreeStarts {
     }
 
     private static PlayMakerFSM? Find(string name, string fsm) =>
-        Object.FindObjectsByType<PlayMakerFSM>(FindObjectsSortMode.None)
+        RoomScan.All<PlayMakerFSM>()
             .FirstOrDefault(f => f.gameObject.name == name && f.FsmName == fsm);
 }

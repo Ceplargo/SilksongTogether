@@ -23,6 +23,20 @@ internal static class EntityRegistry {
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static bool RegistersMiteflySprite() => true;
 
+    /// <summary>(coop, 0.4 enemies) The Flower Queen's spike balls as an entity kind (FlowerQueenSpike): each game
+    /// threw its own, with random waits, offsets and rotation (NOTES 601). Not inlined: the twin skips it (false).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static bool RegistersFlowerSpikes() => true;
+
+    /// <summary>
+    /// (coop, 0.4) The Mite Trap's own entry, which carries its children's active states (ChildrenActivation): a sprung
+    /// trap lies on its child Phys, which only the runner's game switched on, so taken over it came out kinematic with
+    /// Phys off and a hit sent it through the ceiling (probe_trap_takeover_hit). Not inlined: takeover_rooms' twin skips
+    /// it, which gives false, and the trap is a plain Mite again.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool CarriesTrapChildren() => true;
+
     /// <summary>
     /// The file path of the embedded resource file for the entity registry.
     /// </summary>
@@ -112,6 +126,8 @@ internal static class EntityRegistry {
             if ((entry.Type is EntityType.MossBoneCocoon or EntityType.ShellwoodHive) && !RegistersTrapBodies()) continue;
             if (entry.Type == EntityType.Fluttermite && entry.BaseObjectName == "Sprite" &&
                 entry.ParentName == "Mitefly" && !RegistersMiteflySprite()) continue;
+            if (entry.BaseObjectName == "Mite Trap" && !CarriesTrapChildren()) continue;
+            if (entry.Type == EntityType.FlowerQueenSpike && !RegistersFlowerSpikes()) continue;
             if (!gameObject.name.Contains(entry.BaseObjectName)) {
                 continue;
             }

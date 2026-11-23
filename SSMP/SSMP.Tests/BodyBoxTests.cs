@@ -23,4 +23,24 @@ public class BodyBoxTests {
     [Fact]
     public void The_same_box_is_not_sent() =>
         Assert.False(BodyBox.Changed([1f, 9.7f, 3.3f, 0f, 0f], [1f, 9.705f, 3.3f, 0f, 0f]));
+
+    [Fact]
+    public void The_first_numbered_box_is_applied() => Assert.True(BodyBox.Newer(-1, 0));
+
+    [Fact]
+    public void The_next_box_is_applied() => Assert.True(BodyBox.Newer(4, 5));
+
+    [Fact]
+    public void An_older_box_sent_again_after_a_newer_one_is_dropped() =>
+        // the copy's box back on 0.13 s after it went off, sized as an earlier frame (run 2026-11-19_074229-sweep-pair5)
+        Assert.False(BodyBox.Newer(5, 4));
+
+    [Fact]
+    public void The_same_box_twice_is_dropped() => Assert.False(BodyBox.Newer(5, 5));
+
+    [Fact]
+    public void Numbers_wrap() {
+        Assert.True(BodyBox.Newer(65530, 2));
+        Assert.False(BodyBox.Newer(2, 65530));
+    }
 }

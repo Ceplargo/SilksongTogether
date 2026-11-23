@@ -29,6 +29,12 @@ internal record QuestNote(string Talker, string QuestKey, bool Done, string Scen
 internal record FoundNote(string Finder, string ItemKey, string QuestKey, int Count, int Needed, int Amount, string Scene,
     float X, float Y);
 
+/// <summary>
+/// (0.4 World B) A rosary set taken from a saved world pickup in the taker's game: the taker's name, the item's asset name
+/// and the room. Each other game pays its player one (QuestRewards.PaysOthersPickup).
+/// </summary>
+internal record TakenNote(string Taker, string ItemKey, string Scene);
+
 internal enum Where { Screen, Chat }
 
 /// <summary>The watcher's camera view in world units.</summary>
@@ -54,7 +60,10 @@ internal static class DialogueShare {
     public static string Encode(FoundNote n) => string.Join(Sep.ToString(), "F", n.Finder, n.ItemKey, n.QuestKey,
         Num(n.Count), Num(n.Needed), Num(n.Amount), n.Scene, Num(n.X), Num(n.Y));
 
-    /// <summary>A <see cref="DialoguePage"/>, <see cref="QuestNote"/> or <see cref="FoundNote"/>; null for anything else.</summary>
+    public static string Encode(TakenNote n) => string.Join(Sep.ToString(), "R", n.Taker, n.ItemKey, n.Scene);
+
+    /// <summary>A <see cref="DialoguePage"/>, <see cref="QuestNote"/>, <see cref="FoundNote"/> or <see cref="TakenNote"/>; null
+    /// for anything else.</summary>
     public static object? Decode(string text) {
         var f = text.Split(Sep);
         if (f[0] == "Q" && f.Length == 7 && f[3] is "0" or "1") {
@@ -63,6 +72,7 @@ internal static class DialogueShare {
                 ? new QuestNote(f[1], f[2], f[3] == "1", f[4], qx, qy)
                 : null;
         }
+        if (f[0] == "R" && f.Length == 4) return new TakenNote(f[1], f[2], f[3]);
         if (f[0] == "F" && f.Length == 10) {
             return int.TryParse(f[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out var count)
                    && int.TryParse(f[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out var needed)

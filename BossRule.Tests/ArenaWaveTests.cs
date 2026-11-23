@@ -25,11 +25,45 @@ public class ArenaWaveTests {
     [Fact]
     public void No_host_wave_starts_nothing() => Assert.Equal(WaveStep.None, ArenaWave.For(false, false, -1, -1));
 
+    // Dock_08's Wave 1 Dock Worker in Battle Dormant: its wave started here while this game followed (lead rejoins, 0.4)
+    [Fact]
+    public void A_child_still_waiting_in_a_wave_started_while_following_wakes() =>
+        Assert.True(ArenaWave.WakesAgain(true, new[] { "BATTLE START", "WAKE" }));
+
+    // out already (the runner's game woke it, its copy's state taken over): its state has no BATTLE START
+    [Fact]
+    public void A_child_out_already_is_left() => Assert.False(ArenaWave.WakesAgain(true, new[] { "FINISHED" }));
+
+    // a wave this game started as the room's scene host: its own start reached its own enemies
+    [Fact]
+    public void A_wave_started_as_scene_host_is_left() =>
+        Assert.False(ArenaWave.WakesAgain(false, new[] { "BATTLE START" }));
+
     [Fact]
     public void A_message_reads_back_its_path_and_wave() {
         Assert.Equal(("Battle Scene", 3), ArenaWave.Parse(ArenaWave.Message("Battle Scene", 3)));
         Assert.Equal(("Quest Scene/Final|Encounter", 0), ArenaWave.Parse(ArenaWave.Message("Quest Scene/Final|Encounter", 0)));
         Assert.Null(ArenaWave.Parse("Battle Scene"));
         Assert.Null(ArenaWave.Parse("Battle Scene|x"));
+    }
+
+    // (Ant_05b's lead rejoin) an original the runner's game killed, its hp set to 0 by SSMP, leaves its wave at the takeover
+    [Fact]
+    public void An_original_killed_in_the_runners_game_is_gone() {
+        Assert.True(ArenaWave.Gone(0));
+        Assert.True(ArenaWave.Gone(-3));
+    }
+
+    [Fact]
+    public void A_living_enemy_or_a_child_with_no_health_stays() {
+        Assert.False(ArenaWave.Gone(30));
+        Assert.False(ArenaWave.Gone(null));
+    }
+
+    [Fact]
+    public void Only_a_game_that_followed_the_room_takes_its_arenas_over() {
+        Assert.True(ArenaWave.TakesOver(followed: true, sceneHostNow: true));
+        Assert.False(ArenaWave.TakesOver(followed: false, sceneHostNow: true));
+        Assert.False(ArenaWave.TakesOver(followed: true, sceneHostNow: false));
     }
 }

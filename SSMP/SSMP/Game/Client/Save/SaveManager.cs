@@ -169,6 +169,12 @@ internal class SaveManager {
     /// <summary>
     /// List of HashSet variables in PlayerData.
     /// </summary>
+    /// <summary>
+    /// (coop, optimization fix B) Each compound variable's field, looked up once: by name every frame it made new
+    /// arrays in the game's Mono (OnUpdateCompounds, 262 MB in a 30-minute co-op walk, mini PC job 25).
+    /// </summary>
+    private static readonly Dictionary<string, FieldInfo> CompoundFields = new();
+
     private static readonly List<string> HashSetVariables = [
         "scenesEncounteredBench",
         "scenesEncounteredCocoon",
@@ -191,6 +197,9 @@ internal class SaveManager {
     /// The save updates sent in the last minute, for a rejoin after a dropped connection.
     /// </summary>
     private readonly HeldSaveUpdates _held;
+
+    // (coop, 0.4 World A) the server's one order of shared writes, as this game follows it (SaveOrder)
+    private readonly SaveOrder _order = new();
 
     public SaveManager(NetClient netClient, EntityManager entityManager, ServerSettings serverSettings) {
         _netClient = netClient;
@@ -308,6 +317,7 @@ internal class SaveManager {
     private void OnConnect(ServerInfo serverInfo) {
         // The server took the held save updates with the join (or they were another run's)
         _held.Connected(serverInfo.RunId);
+        _order.Clear();
 
         if (serverInfo.FullSynchronisation) {
             ResetLastPlayerData();
@@ -389,6 +399,12 @@ internal class SaveManager {
     /// <param name="name">The name of the container field.</param>
     private void SendComplexChanges(string name) {
         if (_lastComplex == null || !_lastComplex.TryGetValue(name, out var last)) {
+            return;
+        }
+
+        // (coop, optimization) nothing changed since the last read: no new projection and no compare, which made about
+        // 2 MB of garbage a second per game with full lists (mini PC job 102); a change takes the full read below
+        if (ComplexFieldReader.SkipsUnchanged() && ComplexFieldReader.Unchanged(name, last)) {
             return;
         }
 
@@ -491,6 +507,22 @@ internal class SaveManager {
         }
     }
 
+    // (coop, 0.4 World A) the room the saved objects were last found in, to tell a reload of the same room
+    private string? _persistentRoom;
+
+    /// <summary>
+    /// (coop, 0.4 World A) After a reload of the same room, the bools found again whose loaded value differs from the one
+    /// this game had before it: each sent as its change (ReloadResend), so every game and the server end with it.
+    /// </summary>
+    private void SendReloaded(IReadOnlyDictionary<PersistentItemKey, bool> before) {
+        var found = _persistentFsmData.Where(d => d is { IsInt: false }).Select(d => d!).ToList();
+        var changed = ReloadResend.Changed(before, found.Select(d => (d.PersistentItemKey, d.LastBoolValue, d.Semi)));
+        foreach (var data in found.Where(d => changed.Contains(d.PersistentItemKey))) {
+            Logger.Info($"Reloaded room changed {data.PersistentItemKey} to {data.LastBoolValue}: sent");
+            SendBoolChange(data, data.LastBoolValue);
+        }
+    }
+
     /// <summary>
     /// Callback method for when the scene changes. Used to check for GeoRock, PersistentInt and PersistentBool
     /// instances in the scene.
@@ -498,11 +530,18 @@ internal class SaveManager {
     /// <param name="oldScene">The old scene.</param>
     /// <param name="newScene">The new scene.</param>
     private void OnSceneChanged(Scene oldScene, Scene newScene) {
+        // (coop, 0.4 World A) a reload of the same room: the bools as this game had them, to send those it changed
+        var reload = newScene.name == _persistentRoom
+            ? _persistentFsmData.Where(d => d is { IsInt: false } && !IsDestroyed(d))
+                .GroupBy(d => d!.PersistentItemKey).ToDictionary(g => g.Key, g => g.First()!.LastBoolValue)
+            : null;
         _persistentFsmData.Clear();
         _seenPersistents.Clear();
         _roomShared.Clear();
         _persistentScene = newScene;
+        _persistentRoom = newScene.name;
         WatchPersistents(newScene);
+        if (reload != null && ReloadResend.Resends()) SendReloaded(reload);
 
         // (coop, 0.3.21) joined again after the room's items (their Awake joined it as the room loaded), so its turn
         // comes after theirs; shortcut: an enemy brought out later saves after it, fine while shared ids are out at load
@@ -511,12 +550,52 @@ internal class SaveManager {
         if (_roomSaves != null) _roomSaves.SavePersistentObjects += OnRoomSaved;
     }
 
+    // (coop, fix L) WatchPersistents' reused lists: the room's roots, and per component type the look's finds and one
+    // root's (one look at a time, on the main thread; mini PC job 96)
+    private readonly List<GameObject> _roots = [];
+
+    private static class Found<T> where T : Component {
+        public static readonly List<T> All = [];
+        public static readonly List<T> OfRoot = [];
+    }
+
     /// <summary>
     /// Watch the GeoRock, PersistentInt and PersistentBool instances out in the scene that were not looked at yet.
     /// </summary>
     /// <param name="newScene">The scene.</param>
     private void WatchPersistents(Scene newScene) {
-        foreach (var geoRock in Object.FindObjectsByType<GeoRock>(FindObjectsSortMode.None)) {
+        // (coop, fix L) the room's own active objects, as FindObjectsByType gives them and the scene test below keeps;
+        // GetComponentsInChildren(false) also gave objects not out yet (Bone_04's spawned Pilgrims, mini PC job 81b).
+        // Into reused lists: an array for each root and type through LINQ made 106 to 114 KB a look, twice a second
+        // (the old look 9 to 23 KB; mini PC job 96)
+        var sceneOnly = SceneScan.SavesSceneOnly();
+        _roots.Clear();
+        if (sceneOnly && newScene.isLoaded) newScene.GetRootGameObjects(_roots);
+        List<T> Out<T>() where T : Component {
+            var all = Found<T>.All;
+            all.Clear();
+            if (!sceneOnly) {
+                all.AddRange(Object.FindObjectsByType<T>(FindObjectsSortMode.None));
+                return all;
+            }
+
+            foreach (var root in _roots) {
+                Found<T>.OfRoot.Clear();
+                root.GetComponentsInChildren(false, Found<T>.OfRoot);
+                foreach (var component in Found<T>.OfRoot) {
+                    if (component.gameObject.activeInHierarchy) all.Add(component);
+                }
+            }
+
+            return all;
+        }
+        // (coop, fix M) the game's levers and saved objects, scanned once for every object this look finds (one frame)
+        var once = SceneScan.OneScanPerLook();
+        Lever_tk2d[]? levers = null;
+        Lever[]? plainLevers = null;
+        PersistentBoolItem[]? allItems = null;
+
+        foreach (var geoRock in Out<GeoRock>()) {
             var geoRockObject = geoRock.gameObject;
 
             if (geoRockObject.scene != newScene || !_seenPersistents.Add(geoRock)) {
@@ -558,7 +637,7 @@ internal class SaveManager {
             _persistentFsmData.Add(persistentFsmData);
         }
 
-        foreach (var persistentBoolItem in Object.FindObjectsByType<PersistentBoolItem>(FindObjectsSortMode.None)) {
+        foreach (var persistentBoolItem in Out<PersistentBoolItem>()) {
             var itemObject = persistentBoolItem.gameObject;
 
             if (itemObject.scene != newScene || !_seenPersistents.Add(persistentBoolItem)) {
@@ -577,21 +656,39 @@ internal class SaveManager {
             Action<bool>? setCurrentBoolAction = null;
 
             var fsm = FSMUtility.FindFSMWithPersistentBool(itemObject.GetComponents<PlayMakerFSM>());
+            System.Action? breakTick = null;
             if (fsm) {
                 var fsmBool = fsm.FsmVariables.GetFsmBool("Activated");
                 getCurrentBoolFunc = () => fsmBool.Value;
+                // (coop, 0.3.21) a break from another game breaks the live object its own way (ArrivedBreaks), when
+                // its state takes it now
+                bool SendBreak(bool value, bool before) {
+                    var state = fsm.Fsm?.ActiveState;
+                    var arrived = state == null ? null : ArrivedBreaks.Of(fsm.gameObject.name, fsm.FsmName, value, before,
+                        state.Transitions.Select(t => t.EventName).ToList(), SameKey());
+                    if (arrived is not { } how) return false;
+                    Logger.Info($"Arrived break sent to {fsm.gameObject.name}'s {fsm.FsmName} in {state!.Name}: {how.Event ?? how.State}");
+                    if (how.Event != null) fsm.SendEvent(how.Event);
+                    else fsm.SetState(how.State);
+                    return true;
+                }
+
+                // (coop, 0.4) how many live bools here save under its id (Under_27's two Twig Wall (1)s share one)
+                int SameKey() => _persistentFsmData.Count(d => d is { IsInt: false } && d.PersistentItemKey.Equals(persistentItemData));
+
+                // (coop, 0.4) one that arrives mid-hit is tried each frame till its state takes it, RetryS at most
+                // (Belltown_basement_03's One Way Wall (4) under lag 50 stayed standing in the host's game)
+                var retryUntil = 0f;
                 setCurrentBoolAction = value => {
                     var before = fsmBool.Value;
                     fsmBool.Value = value;
-                    // (coop, 0.3.21) a break from another game breaks the live object its own way (ArrivedBreaks)
-                    var state = fsm.Fsm?.ActiveState;
-                    var arrived = state == null ? null : ArrivedBreaks.Of(fsm.gameObject.name, fsm.FsmName, value, before,
-                        state.Transitions.Select(t => t.EventName).ToList());
-                    if (arrived is { } how) {
-                        Logger.Info($"Arrived break sent to {fsm.gameObject.name}'s {fsm.FsmName} in {state!.Name}: {how.Event ?? how.State}");
-                        if (how.Event != null) fsm.SendEvent(how.Event);
-                        else fsm.SetState(how.State);
-                    }
+                    retryUntil = !SendBreak(value, before) && ArrivedBreaks.Waits(value, before, SameKey())
+                        ? Time.unscaledTime + ArrivedBreaks.RetryS
+                        : 0f;
+                };
+                breakTick = () => {
+                    if (retryUntil == 0f) return;
+                    if (!fsm || Time.unscaledTime > retryUntil || SendBreak(true, false)) retryUntil = 0f;
                 };
             }
 
@@ -604,7 +701,16 @@ internal class SaveManager {
             var breakable = itemObject.GetComponent<Breakable>();
             if (breakable) {
                 getCurrentBoolFunc = () => breakable.isBroken;
-                setCurrentBoolAction = value => breakable.isBroken = value;
+                // (coop, 0.4) a live wall broken in another game breaks here with the game's own break (its solid
+                // goes); the flag alone left it standing (PersistentApply.ForBreakable)
+                setCurrentBoolAction = value => {
+                    if (PersistentApply.ForBreakable(value, breakable.IsBroken, breakable.isActiveAndEnabled)) {
+                        Logger.Info($"Arrived break: {itemObject.name} breaks here");
+                        breakable.BreakSelf();
+                    } else {
+                        breakable.isBroken = value;
+                    }
+                };
             }
 
             var dreamPlant = itemObject.GetComponent<DreamPlant>();
@@ -675,8 +781,8 @@ internal class SaveManager {
 
             // A gate its own lever here is opening keeps its sequence: the other game's value, sent as that game's
             // sequence started, loaded it open mid-way (0.3.21, Bone_04's Bone Gate)
-            var openingLever = LeverHit.LeverOf(itemObject);
-            var openingPlain = LeverHit.PlainLeverOf(itemObject);
+            var openingLever = LeverHit.LeverOf(itemObject, once ? levers ??= Object.FindObjectsByType<Lever_tk2d>(FindObjectsSortMode.None) : null);
+            var openingPlain = LeverHit.PlainLeverOf(itemObject, once ? plainLevers ??= Object.FindObjectsByType<Lever>(FindObjectsSortMode.None) : null);
             if (openingLever || openingPlain) {
                 var load = setCurrentBoolAction;
                 setCurrentBoolAction = value => {
@@ -730,11 +836,13 @@ internal class SaveManager {
                 Owner = persistentBoolItem,
                 Semi = persistentBoolItem.GetIsSemiPersistent(),
                 Enemies = itemObject.GetComponent<HealthManager>()
-                    ? EnemiesWithId(persistentItemData.Id, persistentItemData.SceneName)
+                    ? EnemiesWithId(persistentItemData.Id, persistentItemData.SceneName, once
+                        ? allItems ??= Object.FindObjectsByType<PersistentBoolItem>(FindObjectsInactive.Include, FindObjectsSortMode.None)
+                        : null)
                     : 0,
                 GetCurrentBool = getCurrentBoolFunc,
                 SetCurrentBool = setCurrentBoolAction,
-                Tick = arenaTick,
+                Tick = arenaTick + breakTick,
                 LastBoolValue = SceneData.instance.PersistentBools.TryGetValue(
                     persistentItemData.SceneName,
                     persistentItemData.Id,
@@ -751,7 +859,7 @@ internal class SaveManager {
             }
         }
 
-        foreach (var persistentIntItem in Object.FindObjectsByType<PersistentIntItem>(FindObjectsSortMode.None)) {
+        foreach (var persistentIntItem in Out<PersistentIntItem>()) {
             var itemObject = persistentIntItem.gameObject;
 
             if (itemObject.scene != newScene || !_seenPersistents.Add(persistentIntItem)) {
@@ -904,6 +1012,11 @@ internal class SaveManager {
     [MethodImpl(MethodImplOptions.NoInlining)] // pickups_at_once's twin switches it off with a patch
     private static bool LoadsArrivedObjects() => true;
 
+    /// <summary>(coop, 0.4 World A) Whether arriving shared writes follow the server's one order (setpd_once's twin
+    /// switches it off with a patch: each game applies whatever arrives, and two writes at once end crossed).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool OrdersWrites() => true;
+
     /// <summary>(coop) Whether a friend's game skips its own saves while in the host's world.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
     private static bool SkipsFriendSaves() => true;
@@ -918,6 +1031,7 @@ internal class SaveManager {
     /// ClaimHooks.MarkerFor).</param>
     /// <param name="delta">Whether the value is a change to add rather than the new value.</param>
     private void SendSaveUpdate(ushort index, byte[] value, string claim, bool delta = false) {
+        if (!delta) _order.Sent(index); // on its way until the server answers it (SaveOrder)
         _netClient.UpdateManager.SetSaveUpdate(
             index, value, _held.Add(index, value, delta, Time.unscaledTimeAsDouble, claim), claim
         );
@@ -941,19 +1055,23 @@ internal class SaveManager {
     /// Forget the world objects whose part the game destroyed: they throw when read or set (every frame in rooms such
     /// as Library_13, and at a join after leaving a room for the main menu).
     /// </summary>
-    private void DropDestroyedPersistents() =>
-        _persistentFsmData.RemoveAll(data => {
-            if (data?.Owner is not { } owner || owner != null) return false;
-            // a bool whose object went in the frame it changed: its stored change still goes out (DroppedChange)
-            if (!data.IsInt && SceneData.instance != null) {
-                var has = SceneData.instance.PersistentBools.TryGetValue(data.PersistentItemKey.SceneName, data.PersistentItemKey.Id, out var stored);
-                if (DroppedChange.Of(has, has && stored.Value, data.LastBoolValue) is { } change) {
-                    Logger.Info($"Dropped destroyed {data.PersistentItemKey}: stored {change}, last compared {data.LastBoolValue}");
-                    if (DroppedChange.Sends()) SendBoolChange(data, change);
-                }
+    private void DropDestroyedPersistents() => _persistentFsmData.RemoveAll(_isDestroyed ??= IsDestroyed);
+
+    // (coop, optimization fix B) made once: a lambda here was a new delegate every frame
+    private Predicate<PersistentFsmData?>? _isDestroyed;
+
+    private bool IsDestroyed(PersistentFsmData? data) {
+        if (data?.Owner is not { } owner || owner != null) return false;
+        // a bool whose object went in the frame it changed: its stored change still goes out (DroppedChange)
+        if (!data.IsInt && SceneData.instance != null) {
+            var has = SceneData.instance.PersistentBools.TryGetValue(data.PersistentItemKey.SceneName, data.PersistentItemKey.Id, out var stored);
+            if (DroppedChange.Of(has, has && stored.Value, data.LastBoolValue) is { } change) {
+                Logger.Info($"Dropped destroyed {data.PersistentItemKey}: stored {change}, last compared {data.LastBoolValue}");
+                if (DroppedChange.Sends()) SendBoolChange(data, change);
             }
-            return true;
-        });
+        }
+        return true;
+    }
 
     /// <summary>
     /// (coop, 0.3.21) This game's death or bench rest resets its semi-persistent values (killed Pilgrims) as the game
@@ -1000,9 +1118,9 @@ internal class SaveManager {
     private static bool KeepsArrivedDeaths() => true;
 
     /// <summary>(coop, 0.3.21) How many enemies of the loaded rooms save under this id (SSMP's copies have their own).</summary>
-    private static int EnemiesWithId(string id, string scene) {
+    private static int EnemiesWithId(string id, string scene, PersistentBoolItem[]? items = null) {
         var n = 0;
-        foreach (var item in Object.FindObjectsByType<PersistentBoolItem>(FindObjectsInactive.Include,
+        foreach (var item in items ?? Object.FindObjectsByType<PersistentBoolItem>(FindObjectsInactive.Include,
                      FindObjectsSortMode.None)) {
             if (item.ItemData.ID == id && item.ItemData.SceneName == scene && item.GetComponent<HealthManager>()) n++;
         }
@@ -1230,7 +1348,11 @@ internal class SaveManager {
         ) {
             foreach (var varName in variableNames) {
                 // Get current value from player data based on the variable name
-                var currentValue = (TVar) typeof(PlayerData).GetField(varName).GetValue(PlayerData.instance);
+                if (!CompoundFields.TryGetValue(varName!, out var field)) {
+                    CompoundFields[varName!] = field = typeof(PlayerData).GetField(varName);
+                }
+
+                var currentValue = (TVar) field.GetValue(PlayerData.instance);
                 // Get the value with which to check whether this current value is new or not
                 // In some cases this is the same value, in others this is a hash of the value
                 var currentCheckValue = newCheckFunc.Invoke(currentValue);
@@ -1252,21 +1374,7 @@ internal class SaveManager {
                 // Since the value changed, we update it in the dictionary
                 checkDict[varName] = currentCheckValue;
 
-                if (deltaEncodeFunc == null) {
-                    CheckSendSaveUpdate(varName, () => EncodeSaveDataValue(varName, currentValue));
-                } else {
-                    var lastValue = _lastPlayerData.GetVariable<TVar>(varName);
-
-                    CheckSendSaveUpdate(
-                        varName,
-                        () => EncodeSaveDataValue(varName, currentValue),
-                        () => deltaEncodeFunc.Invoke(currentValue, lastValue)
-                    );
-
-                    // Also update the current value in the PlayerData instance for last values
-                    // We copy the value, because otherwise it will be updated whenever the list is updated
-                    _lastPlayerData.SetVariable(varName, (TVar) GetCompoundCopy(currentValue));
-                }
+                SendCompound(varName!, currentValue, deltaEncodeFunc);
             }
         }
 
@@ -1362,7 +1470,7 @@ internal class SaveManager {
         CheckUpdates<HashSet<string>, int>(
             HashSetVariables,
             _listHashes,
-            hashSet => GetListHashCode(hashSet?.ToList()),
+            hashSet => ListHash.Of(hashSet),
             (hash1, hash2) => hash1 != hash2,
             (currentValue, lastValue) => {
                 var currentSet = currentValue as HashSet<string> ?? [];
@@ -1380,14 +1488,54 @@ internal class SaveManager {
     }
 
     /// <summary>
+    /// (coop, optimization fix B) A changed compound variable sent. Its own method so that OnUpdateCompounds' loop captures
+    /// nothing: with these lambdas in the loop, every variable made a closure object every frame (save_allocs: 655 bytes a
+    /// call, mini PC job 35).
+    /// </summary>
+    private void SendCompound<TVar>(string varName, TVar currentValue, Func<object, object, byte[]>? deltaEncodeFunc) {
+        if (deltaEncodeFunc == null) {
+            CheckSendSaveUpdate(varName, () => EncodeSaveDataValue(varName, currentValue));
+            return;
+        }
+
+        var lastValue = _lastPlayerData.GetVariable<TVar>(varName);
+
+        CheckSendSaveUpdate(
+            varName,
+            () => EncodeSaveDataValue(varName, currentValue),
+            () => deltaEncodeFunc.Invoke(currentValue!, lastValue!)
+        );
+
+        // Also update the current value in the PlayerData instance for last values
+        // We copy the value, because otherwise it will be updated whenever the list is updated
+        _lastPlayerData.SetVariable(varName, (TVar) GetCompoundCopy(currentValue));
+    }
+
+    /// <summary>
     /// Callback method for when a save update is received.
     /// </summary>
     /// <param name="saveUpdate">The save update that was received.</param>
     public void UpdateSaveWithData(SaveUpdate saveUpdate) {
-        Logger.Info($"Received save update for index: {saveUpdate.SaveDataIndex}");
-
         var index = saveUpdate.SaveDataIndex;
         var value = saveUpdate.Value;
+
+        // (coop, 0.4 World A) one order, the server's arrival: the answer to this game's own write applies another's
+        // held behind it, and another's write older than what this game has is not applied (SaveOrder)
+        if (saveUpdate.Own) {
+            if (OrdersWrites() && _order.Own(index, saveUpdate.Number) is { } later) {
+                Logger.Info($"Save index {index}: another game's write ordered after this game's own, applied now");
+                UpdateSaveWithData(index, later);
+            }
+
+            return;
+        }
+
+        if (OrdersWrites() && !_order.Other(index, saveUpdate.Number, value)) {
+            Logger.Info($"Save index {index}: another game's write {saveUpdate.Number} held or older, not applied now");
+            return;
+        }
+
+        Logger.Info($"Received save update for index: {index}");
 
         // (coop) The server's value for this player's refused change of a one-of-a-kind action (decision "The lock"):
         // applied to this player's own values too (its money back), which the hosting player's game otherwise keeps
@@ -1923,15 +2071,7 @@ internal class SaveManager {
     /// <param name="list">The list to calculate the hash code for.</param>
     /// <returns>0 if the list is empty or null, otherwise a hash code matching the specific order of values in the list.
     /// </returns>
-    private static int GetListHashCode<T>(List<T>? list) {
-        if (list == null || list.Count == 0) {
-            return 0;
-        }
-
-        return list
-               .Select(item => item?.GetHashCode() ?? 0)
-               .Aggregate((total, nextCode) => total ^ nextCode);
-    }
+    private static int GetListHashCode<T>(List<T>? list) => ListHash.Of(list);
 
     /// <summary>
     /// Get a copy of the given object for compound objects in the PlayerData, such as string lists, integer lists,

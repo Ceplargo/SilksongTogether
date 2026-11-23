@@ -31,6 +31,10 @@ internal static class DialogueChat {
             case FoundNote found:
                 TakeFind(found);
                 break;
+            case TakenNote taken:
+                // (0.4 World B) another player's rosary set from a saved world pickup pays this player one too
+                QuestRewards.Taken(taken);
+                break;
             case DialoguePage { Page: DialogueShare.EndPage } end:
                 DialogueOverlay.End(end.Talker, end.Talk);
                 break;

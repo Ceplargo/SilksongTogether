@@ -23,6 +23,18 @@ internal static class BodyBox {
         return false;
     }
 
+    /// <summary>
+    /// Whether the box numbered seq is newer than the last one applied (-1: none yet; numbers wrap at 65536). Entity data
+    /// goes reliable: a lost packet's data is sent again later, after a newer box. The Bell Beast's copy took her box
+    /// back on, sized as two frames before her burst's end, 0.13 s after it went off with the host's, and kept it
+    /// underground for seconds while the host's stayed off (0.4 enemies A, `bellbeast_body` under lag, 3 of 5 runs).
+    /// </summary>
+    public static bool Newer(int last, ushort seq) => last < 0 || (ushort) (seq - last) is > 0 and < 32768;
+
+    /// <summary>An older box is dropped. Not inlined: bellbeast_lag_body's twin skips it (every box applied).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool DropsStale() => true;
+
     /// <summary>The body box is sent. Not inlined: bellbeast_body's twin skips it.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool Follows() => true;

@@ -19,7 +19,7 @@ public class BossRulePlugin : BaseUnityPlugin {
     /// server refuses a friend whose version differs, since synced values travel as positions in a list built into
     /// the mod.
     /// </summary>
-    internal const string Version = "0.3.23";
+    internal const string Version = "0.4.0";
 
     private BossRuleClientAddon? _client;
 
@@ -37,16 +37,38 @@ public class BossRulePlugin : BaseUnityPlugin {
         var harmony = new Harmony("bossrule");
         harmony.Patch(AccessTools.Method(typeof(Fsm), nameof(Fsm.ProcessEvent), [typeof(FsmEvent), typeof(FsmEventData)]),
             prefix: new HarmonyMethod(typeof(StartGate), nameof(StartGate.ProcessEventPrefix)));
+        // (coop) the Lava Challenge's door waits up to WaitRule.RoomWaitS for every hero in its room (LavaHold)
+        harmony.Patch(AccessTools.Method(typeof(Fsm), nameof(Fsm.ProcessEvent), [typeof(FsmEvent), typeof(FsmEventData)]),
+            prefix: new HarmonyMethod(typeof(LavaHold), nameof(LavaHold.ProcessEventPrefix)));
+        // (coop) an ordinary arena a hero walks into waits up to WaitRule.RoomWaitS for every hero in its room, before the
+        // others (ArenaWaves' and ArenaStarts' sends check that it ran)
+        harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.StartBattle)),
+            prefix: new HarmonyMethod(typeof(ArenaHold), nameof(ArenaHold.StartBattlePrefix)) { priority = Priority.First });
+        harmony.Patch(AccessTools.Method(typeof(BattleScene), "OnTriggerEnter2D"),
+            prefix: new HarmonyMethod(typeof(ArenaHold), nameof(ArenaHold.TriggerPrefix)),
+            finalizer: new HarmonyMethod(typeof(ArenaHold), nameof(ArenaHold.TriggerFinalizer)));
         harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.StartBattle)),
             prefix: new HarmonyMethod(typeof(StartGate), nameof(StartGate.StartBattlePrefix)));
         harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.DoEndBattle)),
             prefix: new HarmonyMethod(typeof(ArenaWins), nameof(ArenaWins.EndPrefix)));
         harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.StartBattle)),
             prefix: new HarmonyMethod(typeof(ArenaWaves), nameof(ArenaWaves.StartBattlePrefix)));
+        // (coop) an ordinary arena started here by this game's own act starts in every game in its room (the owner, 2026-11-20)
+        harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.StartBattle)),
+            prefix: new HarmonyMethod(typeof(ArenaStarts), nameof(ArenaStarts.StartBattlePrefix)),
+            postfix: new HarmonyMethod(typeof(ArenaStarts), nameof(ArenaStarts.StartBattlePostfix)));
+        // (coop) each game shuts an ordinary arena's gates only as its own hero walks in (the owner, 2026-11-20)
+        harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.LockInBattle)),
+            prefix: new HarmonyMethod(typeof(ArenaGates), nameof(ArenaGates.LockPrefix)));
+        harmony.Patch(AccessTools.Method(typeof(Gate), nameof(Gate.ForceClose)),
+            prefix: new HarmonyMethod(typeof(ArenaGates), nameof(ArenaGates.GateClosePrefix)));
         harmony.Patch(AccessTools.Method(typeof(BattleScene), "StartWave"),
             prefix: new HarmonyMethod(typeof(ArenaWaves), nameof(ArenaWaves.StartWavePrefix)));
         harmony.Patch(AccessTools.Method(typeof(BattleScene), nameof(BattleScene.WaveEnd)),
             prefix: new HarmonyMethod(typeof(ArenaWaves), nameof(ArenaWaves.WaveEndPrefix)));
+        // (coop, 0.4) a wave started while following lost its start; given again at the takeover (ArenaWaves.WakeLost)
+        harmony.Patch(AccessTools.Method(typeof(BattleWave), nameof(BattleWave.WaveStarted)),
+            postfix: new HarmonyMethod(typeof(ArenaWaves), nameof(ArenaWaves.WaveStartedPostfix)));
         harmony.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.Trigger2dEvent),
                 nameof(HutongGames.PlayMaker.Actions.Trigger2dEvent.DoTriggerStay2D)),
             prefix: new HarmonyMethod(typeof(GroundBells), nameof(GroundBells.TriggerStayPrefix)));
@@ -57,12 +79,20 @@ public class BossRulePlugin : BaseUnityPlugin {
             prefix: new HarmonyMethod(typeof(TrapFollow), nameof(TrapFollow.DisablePrefix)));
         harmony.Patch(AccessTools.Method(typeof(HutongGames.PlayMaker.Actions.Wait), "OnUpdate"),
             prefix: new HarmonyMethod(typeof(TrapFollow), nameof(TrapFollow.WaitPrefix)));
+        // 0.4 world Task 16: a followed lava hazard takes the scene host's flip
+        harmony.Patch(AccessTools.Method(typeof(RandomlyFlipScale), nameof(RandomlyFlipScale.ApplyScale)),
+            prefix: new HarmonyMethod(typeof(ClockFollow), nameof(ClockFollow.FlipPrefix)));
         harmony.Patch(AccessTools.Method(typeof(ActivateChildrenOnContact), "OnTriggerEnter2D"),
             postfix: new HarmonyMethod(typeof(ContactFollow), nameof(ContactFollow.EnterPostfix)));
+        harmony.Patch(AccessTools.Method(typeof(TempPressurePlate), "PreActivate"),
+            postfix: new HarmonyMethod(typeof(PlateFollow), nameof(PlateFollow.PreActivatePostfix)));
         harmony.Patch(AccessTools.Method(typeof(BellShrineGateLock), nameof(BellShrineGateLock.StartedPlaying)),
             postfix: new HarmonyMethod(typeof(DoorBells), nameof(DoorBells.StartedPostfix)));
         harmony.Patch(AccessTools.Method(typeof(BellShrineGateLock), nameof(BellShrineGateLock.StoppedPlaying)),
             postfix: new HarmonyMethod(typeof(DoorBells), nameof(DoorBells.StoppedPostfix)));
+        // 0.4 world Task 17: a followed heart's reward is its leader's (CutsceneFollower.Reward)
+        harmony.Patch(AccessTools.Method(typeof(HeroController), nameof(HeroController.AddToMaxSilkRegen)),
+            prefix: new HarmonyMethod(typeof(CutsceneFollower), nameof(CutsceneFollower.RewardPrefix)));
         harmony.Patch(AccessTools.Method(typeof(HeroController), "Die", [typeof(bool), typeof(bool)]),
             prefix: new HarmonyMethod(typeof(Spectate), nameof(Spectate.DiePrefix)));
         // The game heads for the main menu (the player's quit, or SSMP after a lost connection): a watcher does not die
@@ -93,6 +123,7 @@ public class BossRulePlugin : BaseUnityPlugin {
                 [typeof(RandomAudioClipTable), typeof(UnityEngine.Vector3), typeof(UnityEngine.AudioSource), typeof(NPCSpeakingAudio)]),
             prefix: new HarmonyMethod(typeof(GreetingFollow), nameof(GreetingFollow.VoicePrefix)));
         DialogueHooks.Apply(harmony);
+        HiddenAreas.Apply(harmony);
         DialogueOverlay.Make();
         // SSMP's two copy dispatchers: a mark's record has the last 10 s of copied actions
         var ssmp = typeof(ClientAddon).Assembly;

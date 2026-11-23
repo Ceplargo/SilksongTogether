@@ -66,6 +66,8 @@ internal static class EntityInitializer {
         foreach (var state in fsm.FsmStates) {
             var stateName = state.Name.ToLower();
             var index = Array.IndexOf(InitStateNames, stateName);
+            // (coop, 0.4) a Swamp Mosquito's "Start at Node?" sets its Idle Point free (TakeoverStates.InitsLikeDeparents)
+            if (index == -1 && TakeoverStates.InitsLikeDeparents(stateName)) index = Array.IndexOf(InitStateNames, "deparents");
             // Check if it is a "init" state
             if (index == -1) {
                 continue;

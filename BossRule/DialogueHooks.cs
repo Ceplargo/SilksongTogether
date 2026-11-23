@@ -45,6 +45,23 @@ internal static class DialogueHooks {
             prefix: new HarmonyMethod(me, nameof(CollectPrefix)), postfix: new HarmonyMethod(me, nameof(CollectPostfix)));
         harmony.Patch(AccessTools.Method(typeof(FullQuestBase), nameof(FullQuestBase.GetDescription)),
             postfix: new HarmonyMethod(me, nameof(DescriptionPostfix)));
+        harmony.Patch(AccessTools.Method(typeof(CollectableItemPickup), "DoPickupAction"),
+            postfix: new HarmonyMethod(me, nameof(PickupPostfix)));
+    }
+
+    private static readonly AccessTools.FieldRef<CollectableItemPickup, PersistentBoolItem> PickupSaved =
+        AccessTools.FieldRefAccess<CollectableItemPickup, PersistentBoolItem>("persistent");
+
+    /// <summary>
+    /// (0.4 World B) This game's hero took a rosary set from a saved world pickup (DoPickupAction's take): the other games
+    /// pay their players one too (TakenNote, QuestRewards.Taken). The pickup itself is taken for everyone.
+    /// </summary>
+    private static void PickupPostfix(CollectableItemPickup __instance, bool __result) {
+        if (!__result || Send == null || __instance.Item is not { } item ||
+            !QuestRewards.PaysOthersPickup(item.name, PickupSaved(__instance) != null)) return;
+        var scene = GameManager.SilentInstance != null ? GameManager.SilentInstance.sceneName : "";
+        Debug.Log($"[BossRule] Taken sent: {item.name} from a saved pickup in {scene}");
+        Share(DialogueShare.Encode(new TakenNote(Username?.Invoke() ?? "", item.name, scene)));
     }
 
     /// <summary>SSMP's DeliveryCarrier.Carrier(questName): who carries a delivery, or null (not a delivery, or no one).</summary>

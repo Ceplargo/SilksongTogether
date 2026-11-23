@@ -305,7 +305,9 @@
     "needs": {
       "encounteredSpinner": false
     },
-    "follow": false
+    "follow": true,
+    "enter": {"state": "To Memory Scene", "scene": "Memory_Needolin", "gate": "door_wakeOnGround"},
+    "memory": {"scene": "Memory_Needolin", "object": "Memory Control", "fsm": "Memory Control", "start": ["Scene Transition Begin 01", "End Pause"]}
   },
   {
     "name": "phantom_parry",
@@ -344,34 +346,22 @@
     ],
     "values": [],
     "how": "touch",
-    "note": "After the Bell Beast its Silk Heart bobs where it fell; touching it (Trigger2dEvent) loads Memory_Silk_Heart_BellBeast, and Silk Heart Memory Return brings the hero back.",
+    "note": "After the Bell Beast its Silk Heart bobs where it fell; touching it (Trigger2dEvent) loads Memory_Silk_Heart_BellBeast, and Silk Heart Memory Return brings the hero back. Followed (0.4 world Task 17): the room's other games go in with the toucher; the memory's Memory Control (its orb's NEXT SCENE starts To White) is followed too, so the leader's end of the memory ends every game's; the heart's reward (AddToMaxSilkRegen, as each hero comes back) is the leader's alone (one_reward).",
     "probe": {
       "win": "defeatedBellBeast",
       "at": "Silk Heart",
       "length_s": 60
     },
-    "follow": false
-  },
-  {
-    "name": "silk_heart_songgolem",
-    "kind": "memory",
-    "scenes": [
-      "Bone_East_08"
-    ],
-    "object": "Boss Scene/Silk Heart",
-    "fsm": "Control",
-    "start": [
-      "Take Control"
-    ],
-    "values": [],
-    "how": "touch",
-    "note": "The same after the Fourth Chorus, to Memory_Silk_Heart_SongGolem.",
-    "probe": {
-      "win": "defeatedSongGolem",
-      "at": "Silk Heart",
-      "length_s": 60
-    },
-    "follow": false
+    "follow": true,
+    "one_reward": true,
+    "memory": {
+      "scene": "Memory_Silk_Heart_BellBeast",
+      "object": "Memory Control",
+      "fsm": "Memory Control",
+      "start": [
+        "To White"
+      ]
+    }
   },
   {
     "name": "shrine_silkspear",
@@ -636,7 +626,6 @@
     "name": "needolin_memory",
     "kind": "memory",
     "scenes": [
-      "Shellwood_11b",
       "Ant_Queen",
       "Aqueduct_06",
       "Aqueduct_07",
@@ -657,12 +646,35 @@
     "needs": {
       "hasNeedolin": true
     },
-    "note": "The Needolin played in its region (CheckHeroPerformanceRegion) takes control and moves the camera into a memory and back. Also as thread_memory vassal (Aqueduct_05, Aspid_01, Bone_East_14, Shellwood_26) and thread_memory_tank (Organ_01). Shellwood_11b first: its deep memory is on in a new save; Ant_Queen's waits for her Deep Melody talk.",
+    "note": "The Needolin played in its region (CheckHeroPerformanceRegion) takes control and moves the camera into a memory and back. Also as thread_memory vassal (Aqueduct_05, Aspid_01, Bone_East_14, Shellwood_26) and thread_memory_tank (Organ_01). Ant_Queen's waits for her Deep Melody talk. Shellwood_11b's deep memory is needolin_deep_shellwood.",
     "probe": {
       "at": "thread_memory",
       "length_s": 30
     },
     "follow": false
+  },
+  {
+    "name": "needolin_deep_shellwood",
+    "kind": "memory",
+    "scenes": [
+      "Shellwood_11b"
+    ],
+    "object": "memory_font/Uncompleted/Memory Group/thread_memory",
+    "fsm": "FSM",
+    "start": [
+      "Deep Memory Enter"
+    ],
+    "values": [],
+    "how": "needolin",
+    "needs": {
+      "hasNeedolin": true
+    },
+    "note": "Shellwood_11b's deep memory, on in a new save: the Needolin played in its region fills it (Burst? Hold.), Deep Memory Enter takes control and Collapse sends THREAD MEMORY BURST, whose Memory Group To Memory loads Shellwood_11b_Memory (door_wakeInMemory): the Flower Queen's fight. Her real death (her corpse's Death: Stagger, Heart Death) brings the hero back to Shellwood_11b about 20 s on, the game alone and in co-op (flower-log2-alone-p3, -coop-p3); her corpse's NPC and the Boss Scene's Scene End (BOSS DEFEAT) never come into it. Followed (0.4 world Task 17 Step 4): each game goes in and comes back with the setter's (deep_memory_follow); killboss leaves her corpse off and the memory never ends, so the check kills her by hits (boss_wins.real_kill).",
+    "probe": {
+      "at": "thread_memory",
+      "length_s": 30
+    },
+    "follow": true
   },
   {
     "name": "bellway_ride",

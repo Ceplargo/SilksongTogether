@@ -22,4 +22,13 @@ public class ThrownCopiesTests {
     [InlineData(true, true)]
     public void Only_a_recovered_throw_is_stopped_by_its_native_end(bool recovered, bool expected) =>
         Assert.Equal(expected, ThrownCopies.StopsAtNativeEnd(recovered));
+
+    // 0.4 enemies Task 5: the friend's censer showed two reads past the Last Judge copy's Catch, the host's update that
+    // put it away a frame or more behind her clip (censer_place, both merged plan2 runs of 2026-11-17)
+    [Theory]
+    [InlineData("Catch", true)]
+    [InlineData("Throw Pull", false)]
+    [InlineData(null, false)]
+    public void A_boss_object_goes_as_the_copy_plays_its_catch(string? playing, bool expected) =>
+        Assert.Equal(expected, ThrownCopies.EndsOnCatch(playing, "Catch"));
 }

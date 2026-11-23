@@ -30,17 +30,30 @@ internal static class ArrivedBreaks {
     /// <summary>
     /// How an arrived value breaks the live FSM (fsm: its name; stateEvents: its active state's events): only true now,
     /// not before; one of the Breakers whose state takes BREAK, or one of the walls in its idle state; else nothing.
+    /// sameKey: how many live objects here save under its id. (0.4, stage3c) More than one, nothing: Under_27's two
+    /// "Shellwood Twig Wall (1)" share one id, and the game alone breaks only the one hit (the other stands till a
+    /// reload), so an arrived value cannot say which; it opened the other one (the world sweep, four orders).
     /// </summary>
-    public static ArrivedBreak? Of(string name, string fsm, bool value, bool before, ICollection<string> stateEvents) {
-        if (!value || before || !Breaks()) return null;
+    public static ArrivedBreak? Of(string name, string fsm, bool value, bool before, ICollection<string> stateEvents,
+        int sameKey = 1) {
+        if (!value || before || sameKey > 1 || !Breaks()) return null;
         if (stateEvents.Contains("BREAK") && (!ByName() || Breakers.Any(name.StartsWith))) return new ArrivedBreak("BREAK", null);
         // (0.3.23) the walls whose idle state takes no BREAK, by their FSM: breakable_wall_v2's Idle takes the game's
         // own QUICK BREAK; break_floor's Idle takes hits only, each checking this game's hero range, so its Break state
         // (its last hit's) is entered
         if (fsm == "breakable_wall_v2" && stateEvents.Contains("QUICK BREAK")) return new ArrivedBreak("QUICK BREAK", null);
         if (fsm == "break_floor" && stateEvents.Contains("NAIL HIT")) return new ArrivedBreak(null, "Break");
+        // (0.4) Shellwood's Twig Walls (Control): Idle takes hits, the load's ACTIVATED and the game's own DESTROY (PD
+        // Bool, Hit 4, End): the friend broke Shellwood_25's (2) with a copied hit lost, the host's stayed standing
+        if (name.StartsWith("Shellwood Twig Wall") && stateEvents.Contains("DESTROY")) return new ArrivedBreak("DESTROY", null);
         return null;
     }
+
+    /// <summary>How long a break that arrived while the object took none (mid-hit) is tried again, each frame.</summary>
+    public const float RetryS = 2f;
+
+    /// <summary>Whether an arrived value that broke nothing now is tried again (a new break: true now, not before).</summary>
+    public static bool Waits(bool value, bool before, int sameKey = 1) => value && !before && sameKey <= 1 && Breaks();
 
     /// <summary>
     /// The name check's switch (local_traps' chain-drop twin skips it, which gives false: every object breaks on an

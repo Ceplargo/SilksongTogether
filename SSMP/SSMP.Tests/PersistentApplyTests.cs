@@ -47,6 +47,17 @@ public class PersistentApplyTests {
         Assert.Equal(left, PersistentApply.LeftToItsArena(arriving, started, completed));
     }
 
+    // Greymoor_16's plank wall: the friend's break reached the host's game as its value, which set only isBroken, so
+    // the wall stood with its solid there (NOTES 515)
+    [Theory]
+    [InlineData(true, false, true, true)]
+    [InlineData(true, true, true, false)]
+    [InlineData(true, false, false, false)]
+    [InlineData(false, false, true, false)]
+    public void A_live_breakable_broken_elsewhere_breaks_here(bool arriving, bool broken, bool live, bool breaks) {
+        Assert.Equal(breaks, PersistentApply.ForBreakable(arriving, broken, live));
+    }
+
     // Bone_04's Shell Shard Fossil Tiny Front (2): the friend's hit reached the host's game as its value before the copy
     // of the friend's swing, whose load broke it there with no break shake or sound
     [Theory]

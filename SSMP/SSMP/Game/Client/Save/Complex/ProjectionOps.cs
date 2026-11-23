@@ -130,6 +130,38 @@ internal static class ProjectionOps {
         }
     }
 
+    /// <summary>
+    /// (coop, optimization) Whether <see cref="Diff"/> from <paramref name="last"/> to the container as read now would be
+    /// empty, without building that projection: every entry read has each shared member equal to last's (Get's rule; a
+    /// member <paramref name="value"/> gives as null is left out, as the reader leaves it out) and every entry of last
+    /// was read. An entry of last not read gives false even when its values were all 0: the caller then reads in full,
+    /// as before. Main thread only, as the poll (one reused set per thread).
+    /// </summary>
+    public static bool Unchanged<T>(
+        Projection last,
+        ComplexFieldSpec spec,
+        IEnumerable<(string Entry, T Data)> entries,
+        Func<T, string, int?> value
+    ) {
+        var seen = _seen ??= [];
+        seen.Clear();
+        foreach (var (entry, data) in entries) {
+            if (last.TryGetValue(entry, out var was)) {
+                seen.Add(entry);
+            }
+
+            foreach (var member in spec.MemberNames) {
+                if (Get(was, member) != (value(data, member) ?? 0)) {
+                    return false;
+                }
+            }
+        }
+
+        return seen.Count == last.Count;
+    }
+
+    [ThreadStatic] private static HashSet<string>? _seen;
+
     private static int Get(Dictionary<string, int>? members, string member) =>
         members != null && members.TryGetValue(member, out var value) ? value : 0;
 }

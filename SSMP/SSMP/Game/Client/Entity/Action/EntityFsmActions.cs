@@ -80,6 +80,12 @@ internal static partial class EntityFsmActions {
     /// </summary>
     private static readonly List<ActionInState> ActionsInState = [];
 
+    /// <summary>(coop) Each copy FSM's last registered scene-host state and the frame it came (StaleStates).</summary>
+    private static readonly ConditionalWeakTable<HutongGames.PlayMaker.Fsm, Tuple<string, int>> LastStates = new();
+
+    /// <summary>(coop) The type of the action being applied, for StaleStates' log line.</summary>
+    private static string? _applying;
+
     /// <summary>
     /// (coop) ILHooks for SpawnObjectFromGlobalPool.OnEnter and SpawnObjectFromGlobalPoolOverTime.OnUpdate: what they
     /// spawn told to ThrownComponent.Flung (the Last Judge's charge bombs).
@@ -263,6 +269,7 @@ internal static partial class EntityFsmActions {
             );
         }
 
+        _applying = actionType.Name;
         try {
             methodInfo.Invoke(
                 null,
@@ -633,6 +640,8 @@ internal static partial class EntityFsmActions {
     /// <param name="stateName">The name of the state that was changed to.</param>
     public static void RegisterStateChange(HutongGames.PlayMaker.Fsm fsm, string stateName) {
         //Logger.Debug($"RegisterStateChange: {fsm.Name}, {stateName}");
+        LastStates.Remove(fsm);
+        LastStates.Add(fsm, Tuple.Create(stateName, Time.frameCount));
 
         // (coop) the entered state's own plays registered already: an emitter it plays too is left playing (InStateStops)
         var registered = ActionsInState.Where(a => a.Fsm == fsm).Select(a => (a.StateName, a.Emitter)).ToList();
@@ -685,8 +694,22 @@ internal static partial class EntityFsmActions {
             // (coop) an entry whose FSM's object is gone (its room unloaded in the state) never sees a state change: drop
             // it, or every late copy's in-state effect (LateEffects) stays behind (static_growth: 10 to 20 over 10 hops)
             ActionsInState.RemoveAll(a => a.Fsm.GameObject == null);
+            // (coop) its state left already in this update (applied before the actions): it ends as it starts
+            if (LastStates.TryGetValue(Fsm, out var last) && last.Item2 == Time.frameCount &&
+                !StaleStates.Keeps(StaleStates.Left(last.Item1, last.Item2, StateName, Time.frameCount, Steps),
+                    () => { if (Coroutine != null) MonoBehaviourUtil.Instance.StopCoroutine(Coroutine); }, ExitAction)) {
+                Logger.Info($"StaleStates: ended at once: {Fsm.GameObject?.name} {Fsm.Name}, state {StateName} " +
+                            $"(the host in {last.Item1}), action {_applying}, room {Fsm.GameObject?.scene.name}");
+                return;
+            }
+
             ActionsInState.Add(this);
         }
+
+        /// <summary>(coop) Transitions from one of its FSM's states to another, fewest first (StaleStates).</summary>
+        private int Steps(string from, string to) => StaleStates.Steps(from, to,
+            s => Fsm.GetState(s)?.Transitions.Select(t => t.ToState) ?? Enumerable.Empty<string>(),
+            Fsm.GlobalTransitions.Select(t => t.ToState).ToList());
 
         /// <summary>
         /// Call when the state is exited, will stop the coroutine and execute the exit action.

@@ -45,7 +45,7 @@ internal static class TollFollow {
     /// <summary>Another game's payment sound: each machine here still waiting unpaid plays that state's own sounds.</summary>
     public static void Received(TollCoins packet) {
         if (!PlaysSounds() || packet.Scene != GameManager.SilentInstance?.sceneName) return;
-        foreach (var fsm in Object.FindObjectsByType<PlayMakerFSM>(FindObjectsSortMode.None)) {
+        foreach (var fsm in RoomScan.All<PlayMakerFSM>()) {
             var activated = fsm.FsmVariables.GetFsmBool("Activated");
             if (!fsm.isActiveAndEnabled || !TollRule.IsMachine(fsm.FsmName, fsm.name) || activated == null ||
                 !TollRule.PlaysCoinsHere(fsm.ActiveStateName, activated.Value)) continue;
@@ -85,7 +85,7 @@ internal static class TollFollow {
             if (scene != _scene) Retracts.Clear();
             _scene = scene;
             _nextLook = Time.unscaledTime + LookEvery;
-            _machines = Object.FindObjectsByType<PlayMakerFSM>(FindObjectsSortMode.None)
+            _machines = RoomScan.All<PlayMakerFSM>()
                 .Where(f => f.FsmName == FsmName && f.name.StartsWith("bell_toll_machine")).ToArray();
         }
 
