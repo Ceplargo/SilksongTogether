@@ -762,7 +762,23 @@ internal class SaveManager {
             // through the game's own loading, from the value stored in SceneData
             if (getCurrentBoolFunc == null || setCurrentBoolAction == null) {
                 getCurrentBoolFunc = persistentBoolItem.GetCurrentValue;
-                setCurrentBoolAction = _ => {
+                // (coop, 0.4.1) one whose FSM has no "Activated" (Greymoor_06's drop platform) takes an arrived break
+                // its own way (ArrivedBreaks), its value kept for its save; else the load, which hid the platform
+                var own = itemObject.GetComponents<PlayMakerFSM>();
+                setCurrentBoolAction = value => {
+                    var before = persistentBoolItem.GetCurrentValue();
+                    foreach (var f in own) {
+                        var state = f ? f.Fsm?.ActiveState : null;
+                        if (state == null || !f.isActiveAndEnabled) continue;
+                        if (ArrivedBreaks.Of(itemObject.name, f.FsmName, value, before,
+                                state.Transitions.Select(t => t.EventName).ToList()) is not { } how) continue;
+                        Logger.Info($"Arrived break sent to {itemObject.name}'s {f.FsmName} in {state.Name}: {how.Event ?? how.State}");
+                        persistentBoolItem.SetValueOverride(true);
+                        if (how.Event != null) f.SendEvent(how.Event);
+                        else f.SetState(how.State);
+                        return;
+                    }
+
                     if (LoadsArrivedObjects()) persistentBoolItem.PreSetup();
                 };
             }
@@ -820,7 +836,7 @@ internal class SaveManager {
                         Logger.Info($"Arena {persistentItemData} not ending {ArenaWinHold.GraceS} s after the other game's win: loaded (started {ArenaState.Started(battle)}, its stored win {stored})");
                         if (ArenaWinHold.StoresAgain()) {
                             if (saved != null) {
-                                saved.Value = true;
+                                Apart(saved, bools.SetValue).Value = true;
                             } else {
                                 bools.SetValue(new PersistentItemData<bool> { ID = persistentItemData.Id, SceneName = persistentItemData.SceneName, Value = true });
                             }
@@ -1059,6 +1075,22 @@ internal class SaveManager {
 
     // (coop, optimization fix B) made once: a lambda here was a new delegate every frame
     private Predicate<PersistentFsmData?>? _isDestroyed;
+
+    /// <summary>(0.4.1) The stored entry to write an arriving value into, apart from a live item's own data
+    /// (<see cref="StoredApart"/>): a copy stored in its place if it is one.</summary>
+    private PersistentItemData<T> Apart<T>(PersistentItemData<T> stored, Action<PersistentItemData<T>> store)
+        where T : IEquatable<T> {
+        var entry = StoredApart.Entry(
+            stored, _persistentFsmData.Select(d => d.Owner is PersistentItem<T> item && item ? item.ItemData : null),
+            s => new PersistentItemData<T> {
+                ID = s.ID, SceneName = s.SceneName, IsSemiPersistent = s.IsSemiPersistent, Value = s.Value, Mutator = s.Mutator
+            }
+        );
+        if (ReferenceEquals(entry, stored)) return stored;
+        store(entry);
+        Logger.Info($"Stored ({stored.ID}, {stored.SceneName}) apart from its live item's own data");
+        return entry;
+    }
 
     private bool IsDestroyed(PersistentFsmData? data) {
         if (data?.Owner is not { } owner || owner != null) return false;
@@ -1615,6 +1647,7 @@ internal class SaveManager {
                     _lastPlayerData?.SetBool(name, decodedBool);
                     pd.SetBool(name, decodedBool);
                     FleaArrival.Apply(name, decodedBool);
+                    TollArrival.Apply(name, decodedBool);
                     break;
                 case float decodedFloat:
                     _lastPlayerData?.SetFloat(name, decodedFloat);
@@ -1781,6 +1814,7 @@ internal class SaveManager {
 
             // The game loads a room's objects from SceneData when the room is entered
             if (sceneData.PersistentBools.TryGetValue(itemData.SceneName, itemData.Id, out var savedBool)) {
+                savedBool = Apart(savedBool, sceneData.PersistentBools.SetValue);
                 savedBool.Value = value;
                 if (kind == SemiPersistence.Semi) savedBool.IsSemiPersistent = true;
             } else {
@@ -1844,6 +1878,7 @@ internal class SaveManager {
             }
 
             if (sceneData.PersistentInts.TryGetValue(itemData.SceneName, itemData.Id, out var savedInt)) {
+                savedInt = Apart(savedInt, sceneData.PersistentInts.SetValue);
                 savedInt.Value = value;
                 if (kind == SemiPersistence.Semi) savedInt.IsSemiPersistent = true;
             } else {

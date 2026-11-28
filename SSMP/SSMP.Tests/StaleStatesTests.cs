@@ -62,7 +62,7 @@ public class StaleStatesTests {
     }
 
     // the Ductsucker's charge box replayed as Unity starts a coroutine: its entry runs to the first wait, then it registers
-    private static (List<string> Log, bool Kept) Replay(bool left) {
+    private static (List<string> Log, bool Kept) Replay(bool left, bool runsOut = false) {
         var log = new List<string>();
         var stopped = false;
         IEnumerator Body() {
@@ -73,7 +73,7 @@ public class StaleStatesTests {
 
         var routine = Body();
         routine.MoveNext();
-        var kept = StaleStates.Keeps(left, () => stopped = true, () => log.Add("exit"));
+        var kept = StaleStates.Keeps(left, runsOut, () => stopped = true, () => log.Add("exit"));
         if (!stopped) routine.MoveNext();
         return (log, kept);
     }
@@ -83,6 +83,20 @@ public class StaleStatesTests {
         var (log, kept) = Replay(true);
         Assert.Equal(new[] { "entry", "exit" }, log);
         Assert.False(kept);
+    }
+
+    // the Widow's Slams Outer came in one frame with DashSlash Antic: each delayed slash is still made, after its delay
+    [Fact]
+    public void A_stale_replay_of_delayed_spawns_runs_out_unkept() {
+        var (log, kept) = Replay(true, runsOut: true);
+        Assert.Equal(new[] { "entry", "rest" }, log);
+        Assert.False(kept);
+    }
+
+    [Fact]
+    public void Only_delayed_spawns_run_out() {
+        Assert.True(StaleStates.RunsOut(true));
+        Assert.False(StaleStates.RunsOut(false));
     }
 
     [Fact]

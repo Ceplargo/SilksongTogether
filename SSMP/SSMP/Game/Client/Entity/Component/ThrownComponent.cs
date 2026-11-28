@@ -77,13 +77,17 @@ internal class ThrownComponent : EntityComponent {
     /// FSM). (coop) The Ant Trapper's barb traps: each barb's own FSM throws it to its rest place moved at random
     /// (TranslateRandom), so the friend's lay 1.1 to 3.2 units from the host's, hurting, for its whole life (NOTES 339).
     /// (coop) The Beastfly's summon cages: each picks where it drops at random (RandomFloat, SetPosition), so the
-    /// friend's fell up to 5.8 units from the host's, hurting (NOTES 342).
+    /// friend's fell up to 5.8 units from the host's, hurting (NOTES 342). (coop, 0.4.1) The Ant Trapper's ground spikes
+    /// (Spike Traps: three spikes rising after her leaps, each FSM resting in Idle): each game put them on its own places
+    /// of a 3-unit grid, about 3 units from the host's for about 0.7 s, hurting (NOTES 618).
     /// </summary>
     private static readonly Dictionary<string, (string Container, string[] Parts, string? AtRest)[]> StageFollowed = new() {
         ["Trobbio"] = [("Flare Glitter", ["Explosion", "Pt Antic"], null), ("Trapdoor Bursts/Bursts", [], null)],
         ["Tormented Trobbio"] = [("Flare Glitter", ["Explosion", "Pt Antic"], null), ("Trapdoor Bursts/Bursts", [], null)],
         ["Skull King"] = [("Boulders Battle", [], "Dormant")],
-        ["Bone Hunter Trapper"] = [("Barb Traps", [], "Dormant"), ("Barb Traps - Add After Intro", [], "Dormant")],
+        ["Bone Hunter Trapper"] = [
+            ("Barb Traps", [], "Dormant"), ("Barb Traps - Add After Intro", [], "Dormant"), ("Spike Traps", [], "Idle")
+        ],
         ["Bone Flyer Giant"] = [("Summon Cages", [], "Dormant")]
     };
 
@@ -494,6 +498,7 @@ internal class ThrownComponent : EntityComponent {
         foreach (var (container, parts, rest) in StageFollowed.TryGetValue(original.name, out var stageObjects) ? stageObjects : []) {
             if (container.StartsWith("Barb Traps") && !FollowsBarbTraps()) continue;
             if (container == "Summon Cages" && !FollowsSummonCages()) continue;
+            if (container == "Spike Traps" && !FollowsSpikeTraps()) continue;
             var stage = original.transform.parent.Find(container);
             if (stage == null) {
                 continue;
@@ -606,6 +611,13 @@ internal class ThrownComponent : EntityComponent {
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static bool FollowsBarbTraps() => true;
+
+    /// <summary>
+    /// (coop, 0.4.1) Whether the Ant Trapper's ground spikes are followed (StageFollowed). Not inlined: trapper_barbs'
+    /// twin skips it with FollowsBarbTraps, which gives false.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool FollowsSpikeTraps() => true;
 
     /// <summary>
     /// (coop) Whether the Beastfly's summon cages are followed (StageFollowed). Not inlined: beastfly_cages' twin skips

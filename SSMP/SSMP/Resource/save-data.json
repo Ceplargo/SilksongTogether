@@ -16886,6 +16886,19 @@
     },
     {
       "Key": {
+        "id": "grave_marker_break_grey",
+        "sceneName": "Bone_09"
+      },
+      "Value": {
+        "Sync": true,
+        "SyncType": "Server",
+        "IgnoreSceneHost": true,
+        "VarType": "System.Boolean",
+        "Additive": false
+      }
+    },
+    {
+      "Key": {
         "id": "Breakable Wall",
         "sceneName": "Bone_10"
       },
@@ -19057,6 +19070,19 @@
     },
     {
       "Key": {
+        "id": "Toll Door Breakable Cog",
+        "sceneName": "Bone_East_10_Room"
+      },
+      "Value": {
+        "Sync": true,
+        "SyncType": "Server",
+        "IgnoreSceneHost": true,
+        "VarType": "System.Boolean",
+        "Additive": false
+      }
+    },
+    {
+      "Key": {
         "id": "Bone Circler Vicious",
         "sceneName": "Bone_East_11"
       },
@@ -21138,6 +21164,19 @@
     {
       "Key": {
         "id": "Rosary Pilgrim",
+        "sceneName": "Bonegrave"
+      },
+      "Value": {
+        "Sync": true,
+        "SyncType": "Server",
+        "IgnoreSceneHost": true,
+        "VarType": "System.Boolean",
+        "Additive": false
+      }
+    },
+    {
+      "Key": {
+        "id": "grave_marker_break_grey (2)",
         "sceneName": "Bonegrave"
       },
       "Value": {
@@ -42587,6 +42626,19 @@
     },
     {
       "Key": {
+        "id": "grave_marker_break_grey (2)",
+        "sceneName": "Shellgrave"
+      },
+      "Value": {
+        "Sync": true,
+        "SyncType": "Server",
+        "IgnoreSceneHost": true,
+        "VarType": "System.Boolean",
+        "Additive": false
+      }
+    },
+    {
+      "Key": {
         "id": "Big Flower",
         "sceneName": "Shellwood_01"
       },
@@ -43433,6 +43485,19 @@
     {
       "Key": {
         "id": "Shellwood Twig Wall top",
+        "sceneName": "Shellwood_11"
+      },
+      "Value": {
+        "Sync": true,
+        "SyncType": "Server",
+        "IgnoreSceneHost": true,
+        "VarType": "System.Boolean",
+        "Additive": false
+      }
+    },
+    {
+      "Key": {
+        "id": "grave_marker_break_grey",
         "sceneName": "Shellwood_11"
       },
       "Value": {

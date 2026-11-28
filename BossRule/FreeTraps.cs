@@ -56,4 +56,12 @@ internal static class FreeTraps {
     /// takes its freeing event (Return Battle's Idle takes ENTER; Start Battle and Title take none).
     /// </summary>
     public static bool LateStarts(string? now, string freed, string ev, IEnumerable<string> stateEvents) => Echoes(now, freed) && stateEvents.Contains(ev);
+
+    /// <summary>
+    /// (0.4.1) Whether a fight-on tell may start one of this game's traps late: none was started late here yet, or the one
+    /// that was is no longer out. A tell that came in the room's first moments found Bone_05's vines still out in Idle
+    /// on her Return path, before the room switched them off; its DESTROY did nothing, and Return Battle, the path the
+    /// room loaded, never got its ENTER (the 0.4.1 gate's bellbeast_join, round 1: the friend's gates open, her title).
+    /// </summary>
+    public static bool LatePicks(bool started, bool startedOut) => !started || !startedOut;
 }

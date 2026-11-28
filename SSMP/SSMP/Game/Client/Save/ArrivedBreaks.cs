@@ -46,6 +46,9 @@ internal static class ArrivedBreaks {
         // (0.4) Shellwood's Twig Walls (Control): Idle takes hits, the load's ACTIVATED and the game's own DESTROY (PD
         // Bool, Hit 4, End): the friend broke Shellwood_25's (2) with a copied hit lost, the host's stayed standing
         if (name.StartsWith("Shellwood Twig Wall") && stateEvents.Contains("DESTROY")) return new ArrivedBreak("DESTROY", null);
+        // (0.4.1) Greymoor_06's drop platform (Drop: Idle takes DROP, then Jitter, Go to BG, Drop, Land): the load hid it
+        // in place in the other game, with no fall, shake or sounds (the mini PC's jobs 143 and 144)
+        if (name.StartsWith("belltown_lever_drop_plat") && fsm == "Drop" && stateEvents.Contains("DROP")) return new ArrivedBreak("DROP", null);
         return null;
     }
 

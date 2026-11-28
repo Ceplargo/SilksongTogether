@@ -49,13 +49,29 @@ internal static class StaleStates {
     /// A replay registering for its state: its entry ran already (its apply, its coroutine's first step: the host's one
     /// frame in the state happened). A stale one has only its in-state rest ended: its coroutine stopped, then its exit
     /// action (a reset on exit, an emitter stopped). Whether it is kept for the next state change.
+    /// <paramref name="runsOut"/> (<see cref="RunsOut"/>): a stale one is not kept, and its rest runs on, ended by no
+    /// state change.
     /// </summary>
-    public static bool Keeps(bool left, System.Action stopRest, System.Action? exit) {
+    public static bool Keeps(bool left, bool runsOut, System.Action stopRest, System.Action? exit) {
         if (!left) return true;
+        if (runsOut) return false;
         stopRest();
         exit?.Invoke();
         return false;
     }
+
+    /// <summary>
+    /// (0.4.1) Whether a stale replay runs out its rest: a replay of delayed spawns (<paramref name="delayedSpawns"/>).
+    /// Its state was left in this update, yet the host could have been in it a while: the update came bunched in transit,
+    /// as the Widow's Slams Outer (all 8 slashes, 0 to 0.25 s, spawned in the host's game) came in one frame with
+    /// DashSlash Antic, and 7 of the 8 never came in the friend's game (0.4.1 gate, widow_slams, 2026-11-23). Each
+    /// spawn is then made after the host's delay.
+    /// </summary>
+    public static bool RunsOut(bool delayedSpawns) => delayedSpawns && RunsOutDelays();
+
+    /// <summary>Not inlined: widow_slams' twin skips it, which gives false (a stale one's spawns stopped, as in 0.4.0).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool RunsOutDelays() => true;
 
     /// <summary>Not inlined: ductsucker_charge's twin skips it, which gives false (the replay runs on, as before).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]

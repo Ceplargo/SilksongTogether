@@ -70,6 +70,20 @@ public class ArrivedBreaksTests {
     public void Another_objects_destroy_is_left() =>
         Assert.Null(Of("Some Lamp", true, false, ["NAIL HIT", "DESTROY"]));
 
+    // (0.4.1) Greymoor_06's belltown_lever_drop_plat (its Drop FSM, no "Activated" bool): the doer's pogo dropped it,
+    // the other game's load hid it in place (the mini PC's jobs 143 and 144); its idle Drop takes the game's own DROP
+    [Fact]
+    public void An_arrived_drop_drops_an_idle_drop_platform() =>
+        Assert.Equal(new ArrivedBreak("DROP", null), Of("belltown_lever_drop_plat", true, false, ["DROP"], "Drop"));
+
+    [Fact]
+    public void A_drop_platform_already_falling_is_left() =>
+        Assert.Null(Of("belltown_lever_drop_plat", true, false, ["FINISHED"], "Drop"));
+
+    [Fact]
+    public void Another_objects_drop_is_left() =>
+        Assert.Null(Of("Some Plat", true, false, ["DROP"], "Drop"));
+
     // (0.4) a break that arrives mid-hit (Belltown_basement_03's One Way Wall (4) under lag 50) is tried again till
     // the object is back in a state that takes it
     [Fact]

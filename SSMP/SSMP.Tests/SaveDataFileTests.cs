@@ -46,4 +46,22 @@ public class SaveDataFileTests {
         Assert.Equal("System.UInt64",
             json.RootElement.GetProperty("playerData").GetProperty(name).GetProperty("VarType").GetString());
     }
+
+    // (0.4.1) The game saves these breakables under ids save-data.json lacked: 0.3.23's scan of the final build's bench
+    // save pass found them (Found persistent bool in scene) beside no entry (NOTES 490), so a break was never sent
+    // ("Not in persistent bool save data") nor kept for the other player. Bone_East_03's grave marker had its entry.
+    [Theory]
+    [InlineData("grave_marker_break_grey", "Bone_09")]
+    [InlineData("grave_marker_break_grey", "Shellwood_11")]
+    [InlineData("grave_marker_break_grey (2)", "Bonegrave")]
+    [InlineData("grave_marker_break_grey (2)", "Shellgrave")]
+    [InlineData("Toll Door Breakable Cog", "Bone_East_10_Room")]
+    public void The_saved_breakables_are_synced(string id, string scene) {
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "save-data.json")));
+        var item = Assert.Single(json.RootElement.GetProperty("persistentBoolItems").EnumerateArray().Where(e =>
+            e.GetProperty("Key").GetProperty("id").GetString() == id &&
+            e.GetProperty("Key").GetProperty("sceneName").GetString() == scene));
+        Assert.True(item.GetProperty("Value").GetProperty("Sync").GetBoolean());
+        Assert.True(item.GetProperty("Value").GetProperty("IgnoreSceneHost").GetBoolean());
+    }
 }

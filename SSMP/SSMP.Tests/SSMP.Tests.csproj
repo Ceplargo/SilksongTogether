@@ -19,6 +19,7 @@
         <Compile Include="..\SSMP\Game\Client\Save\ArrivalQueue.cs" Link="Linked\ArrivalQueue.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\PersistentApply.cs" Link="Linked\PersistentApply.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\GeoRockHold.cs" Link="Linked\GeoRockHold.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\StoredApart.cs" Link="Linked\StoredApart.cs"/>
         <Compile Include="..\SSMP\Game\Client\ThunkSpark.cs" Link="Linked\ThunkSpark.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\TakeoverCrawlers.cs" Link="Linked\TakeoverCrawlers.cs"/>
         <Compile Include="..\SSMP\Game\Client\MapIconRule.cs" Link="Linked\MapIconRule.cs"/>
@@ -69,6 +70,7 @@
         <Compile Include="..\SSMP\Game\Server\Save\ActionClaims.cs" Link="Linked\ActionClaims.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\FleaCampSeats.cs" Link="Linked\FleaCampSeats.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\FleaArrival.cs" Link="Linked\FleaArrival.cs"/>
+        <Compile Include="..\SSMP\Game\Client\Save\TollArrival.cs" Link="Linked\TollArrival.cs"/>
         <Compile Include="..\SSMP\Game\Server\CoopAutoSave.cs" Link="Linked\CoopAutoSave.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\Action\PickRules.cs" Link="Linked\PickRules.cs"/>
         <Compile Include="..\SSMP\Networking\Packet\Pieces.cs" Link="Linked\Pieces.cs"/>

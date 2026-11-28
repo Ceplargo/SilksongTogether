@@ -687,6 +687,9 @@ internal static partial class EntityFsmActions {
         /// <summary>(coop) The emitter an in-state particle play started, kept by a next state that plays it too.</summary>
         public object? Emitter { get; init; }
 
+        /// <summary>(coop, 0.4.1) A replay of delayed spawns: stale, it runs out its delays (StaleStates.RunsOut).</summary>
+        public bool DelayedSpawns { get; init; }
+
         /// <summary>
         /// Register this action by adding it to the list.
         /// </summary>
@@ -695,10 +698,11 @@ internal static partial class EntityFsmActions {
             // it, or every late copy's in-state effect (LateEffects) stays behind (static_growth: 10 to 20 over 10 hops)
             ActionsInState.RemoveAll(a => a.Fsm.GameObject == null);
             // (coop) its state left already in this update (applied before the actions): it ends as it starts
+            var runsOut = StaleStates.RunsOut(DelayedSpawns);
             if (LastStates.TryGetValue(Fsm, out var last) && last.Item2 == Time.frameCount &&
-                !StaleStates.Keeps(StaleStates.Left(last.Item1, last.Item2, StateName, Time.frameCount, Steps),
+                !StaleStates.Keeps(StaleStates.Left(last.Item1, last.Item2, StateName, Time.frameCount, Steps), runsOut,
                     () => { if (Coroutine != null) MonoBehaviourUtil.Instance.StopCoroutine(Coroutine); }, ExitAction)) {
-                Logger.Info($"StaleStates: ended at once: {Fsm.GameObject?.name} {Fsm.Name}, state {StateName} " +
+                Logger.Info($"StaleStates: {(runsOut ? "runs out unkept" : "ended at once")}: {Fsm.GameObject?.name} {Fsm.Name}, state {StateName} " +
                             $"(the host in {last.Item1}), action {_applying}, room {Fsm.GameObject?.scene.name}");
                 return;
             }

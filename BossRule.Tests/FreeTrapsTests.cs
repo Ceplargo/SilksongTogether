@@ -72,4 +72,13 @@ public class FreeTrapsTests {
         Assert.False(FreeTraps.LateStarts("Scene Setup", "Scene Setup", "ENTER", ["FINISHED"]));
         Assert.False(FreeTraps.LateStarts(null, "Scene Setup", "ENTER", ["ENTER"]));
     }
+
+    // (0.4.1) the gate's bellbeast_join, round 1: a tell 0.4 s into the friend's Return-path load started the vines, out
+    // in Idle until the room switched them off; once they were gone, a later tell must start Return Battle
+    [Fact]
+    public void A_late_start_whose_trap_the_room_took_away_picks_again() {
+        Assert.True(FreeTraps.LatePicks(false, false));
+        Assert.True(FreeTraps.LatePicks(true, false));
+        Assert.False(FreeTraps.LatePicks(true, true));
+    }
 }

@@ -506,6 +506,7 @@ internal static partial class EntityFsmActions {
 
     /// <summary>Applies network data to the FSM action: the same object after the same delay, where the copy's spawn
     /// point is then, unless the scene host's FSM left the state first; one due as it is left is made then (DelaySpawns).
+    /// One whose state was left in the same update is made after its delay all the same (StaleStates.RunsOut).
     /// </summary>
     private static void ApplyNetworkDataFromAction(EntityNetworkData data, SpawnObjectFromGlobalPoolDelay action) {
         var delay = data.Packet.ReadFloat();
@@ -519,7 +520,8 @@ internal static partial class EntityFsmActions {
             Coroutine = coroutine,
             ExitAction = () => {
                 if (DelaySpawns.AtExit(made, Time.time - began, delay)) Spawn();
-            }
+            },
+            DelayedSpawns = true
         }.Register();
         return;
 

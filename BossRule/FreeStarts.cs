@@ -24,7 +24,9 @@ internal static class FreeStarts {
     public const string RunningPrefix = "Free Trap Running:";
 
     private const float LookEvery = 0.5f;
-    private const float ResendEvery = 1f;
+    // not const: bellbeast_join's early-tell case sets it short in the host's game (CoopQA setstatic), so a tell reaches
+    // the friend's game in its first moments in the room
+    private static float ResendEvery = 1f;
 
     /// <summary>The start's actions a late game leaves out: her title, and her roar's emitter (its hero's roar lock).</summary>
     private static readonly string[] LateOff = ["DisplayBossTitle", "StartRoarEmitter"];
@@ -39,7 +41,7 @@ internal static class FreeStarts {
     private static bool[] _echoed = [];
     private static bool[] _freed = [];
     private static PlayMakerFSM? _fight;
-    private static bool _late;
+    private static PlayMakerFSM? _late; // the trap's FSM this game started late, if any
     private static float _nextLook, _nextResend;
 
     /// <summary>Every frame: this room's traps, and whether this game's own player just freed one.</summary>
@@ -53,7 +55,7 @@ internal static class FreeStarts {
             _echoed = new bool[_traps.Length];
             _freed = new bool[_traps.Length];
             _fight = null;
-            _late = false;
+            _late = null;
         }
 
         var look = false;
@@ -96,16 +98,19 @@ internal static class FreeStarts {
     /// walked on into her Return trigger).
     /// </summary>
     public static void Late(string scene) {
-        if (scene != _scene || _late || GameManager.SilentInstance?.sceneName != scene) return;
+        // (0.4.1) is not null: picked, even once Unity destroyed it; != null: still there (Unity's own test)
+        var startedOut = _late != null && _late.isActiveAndEnabled;
+        if (scene != _scene || GameManager.SilentInstance?.sceneName != scene ||
+            !FreeTraps.LatePicks(_late is not null, startedOut || !RepicksGone())) return;
         for (var i = 0; i < _traps.Length; i++) {
             var fsm = _fsms[i] ?? Find(_traps[i].Trap, _traps[i].Fsm);
             var state = fsm?.Fsm?.ActiveState;
-            if (fsm == null || state == null ||
+            if (fsm == null || !fsm.isActiveAndEnabled || state == null ||
                 !FreeTraps.LateStarts(fsm.ActiveStateName, _traps[i].Freed, _traps[i].Event, state.Transitions.Select(t => t.EventName))) {
                 continue;
             }
 
-            _late = true;
+            _late = fsm;
             _echoed[i] = true;
             // her title and her roar, which stuns this game's hero, belong to the start the room saw: off in every FSM
             // under the trap (her first path's Beast Anim, a child of the vines, runs both in its Roar)
@@ -118,6 +123,13 @@ internal static class FreeStarts {
             return;
         }
     }
+
+    /// <summary>
+    /// (0.4.1) The switch bellbeast_join's early-tell twin skips (false: a trap started late stays the pick even once the
+    /// room took it away, as before 0.4.1).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool RepicksGone() => true;
 
     /// <summary>Another game's player freed one of this room's traps: this game's frees too, if it still waits.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)] // a check's twin switches it off with a patch
