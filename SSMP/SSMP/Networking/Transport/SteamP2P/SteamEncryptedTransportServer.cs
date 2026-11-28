@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using SSMP.Game;
+using SSMP.Game.Server.Auth;
 using SSMP.Logging;
 using SSMP.Networking.Transport.Common;
 using Steamworks;
@@ -68,6 +69,11 @@ internal sealed class SteamEncryptedTransportServer : IEncryptedTransportServer 
     private Callback<P2PSessionConnectFail_t>? _sessionConnectFailCallback;
 
     /// <summary>
+    /// Callback for lobby member changes: a waiting request's sender may have entered the lobby.
+    /// </summary>
+    private Callback<LobbyChatUpdate_t>? _lobbyChatUpdateCallback;
+
+    /// <summary>
     /// Token source for cancelling the receive loop.
     /// </summary>
     private CancellationTokenSource? _receiveTokenSource;
@@ -81,6 +87,16 @@ internal sealed class SteamEncryptedTransportServer : IEncryptedTransportServer 
     /// Cached loopback channel reference.
     /// </summary>
     private SteamLoopbackChannel? _cachedLoopbackChannel;
+
+    /// <summary>
+    /// Accepts only the lobby's members (locked: requests arrive on Steam's callback thread, rechecks on receive).
+    /// </summary>
+    private readonly LobbyGate _lobbyGate = new();
+
+    /// <summary>
+    /// Clock for a waiting request.
+    /// </summary>
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
 
     /// <summary>
     /// Start listening for Steam P2P connections.
@@ -103,6 +119,7 @@ internal sealed class SteamEncryptedTransportServer : IEncryptedTransportServer 
 
         _sessionRequestCallback = Callback<P2PSessionRequest_t>.Create(OnP2PSessionRequest);
         _sessionConnectFailCallback = Callback<P2PSessionConnectFail_t>.Create(OnP2PSessionConnectFail);
+        _lobbyChatUpdateCallback = Callback<LobbyChatUpdate_t>.Create(_ => AdmitWaiting());
 
         SteamNetworking.AllowP2PPacketRelay(true);
 
@@ -160,6 +177,9 @@ internal sealed class SteamEncryptedTransportServer : IEncryptedTransportServer 
         _sessionConnectFailCallback?.Dispose();
         _sessionConnectFailCallback = null;
 
+        _lobbyChatUpdateCallback?.Dispose();
+        _lobbyChatUpdateCallback = null;
+
         Logger.Info("Steam P2P: Server stopped");
     }
 
@@ -188,14 +208,66 @@ internal sealed class SteamEncryptedTransportServer : IEncryptedTransportServer 
 
     /// <summary>
     /// Callback handler for P2P session requests.
-    /// Automatically accepts all requests and creates client connections.
+    /// Accepts a member of the host's current lobby; a non-member waits (see <see cref="LobbyGate"/>).
     /// </summary>
     private void OnP2PSessionRequest(P2PSessionRequest_t request) {
         if (!_isRunning) return;
 
         var remoteSteamId = request.m_steamIDRemote;
         Logger.Info($"Steam P2P: Received session request from {remoteSteamId}");
+        Admit(remoteSteamId, false);
+    }
 
+    /// <summary>
+    /// Decides a session request against the lobby's members, and accepts it if it is a member's.
+    /// Called on each request (Steam posts it again while the joiner keeps sending), and while a request waits, on
+    /// each lobby member change and each receive pass.
+    /// </summary>
+    /// <param name="remoteSteamId">The sender of the request.</param>
+    /// <param name="ifWaiting">Only if its request still waits (a recheck, so two rechecks never accept it twice).</param>
+    private void Admit(CSteamID remoteSteamId, bool ifWaiting) {
+        LobbyVerdict verdict;
+        double waited;
+        var on = LobbyOnly.Enabled;
+        lock (_lobbyGate) {
+            if (ifWaiting && !_lobbyGate.IsWaiting(remoteSteamId.m_SteamID)) return;
+            verdict = _lobbyGate.Decide(
+                remoteSteamId.m_SteamID, SteamManager.LobbyMembers(), _clock.Elapsed.TotalSeconds, on, out waited
+            );
+        }
+
+        switch (verdict) {
+            case LobbyVerdict.Accept:
+                Logger.Info(
+                    $"Steam P2P: Accepted session from {remoteSteamId}, " +
+                    (on ? $"a member of this lobby (waited {waited:F1} s)" : "lobby-only off")
+                );
+                Accept(remoteSteamId);
+                return;
+            case LobbyVerdict.Refuse:
+                Logger.Warn(
+                    $"Steam P2P: Refused session from {remoteSteamId}: not a member of this lobby (waited {waited:F1} s); " +
+                    "/lobbyonly off accepts any Steam player"
+                );
+                return;
+        }
+    }
+
+    /// <summary>
+    /// Decides again each request left waiting.
+    /// </summary>
+    private void AdmitWaiting() {
+        if (!_isRunning) return;
+
+        ulong[] waiting;
+        lock (_lobbyGate) waiting = _lobbyGate.Waiting();
+        foreach (var id in waiting) Admit(new CSteamID(id), true);
+    }
+
+    /// <summary>
+    /// Accepts a session and creates its client connection.
+    /// </summary>
+    private void Accept(CSteamID remoteSteamId) {
         // If we already have a connection for this user, remove the stale entry first so the new session
         // request can replace it.
         if (_clients.TryGetValue(remoteSteamId, out var existingClient)) {
@@ -278,6 +350,9 @@ internal sealed class SteamEncryptedTransportServer : IEncryptedTransportServer 
                         break;
                     }
                 }
+
+                // A request left open: its sender may have entered the lobby since
+                AdmitWaiting();
 
                 // Poll for available packets (hot path)
                 ProcessIncomingPackets();

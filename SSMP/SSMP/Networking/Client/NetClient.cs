@@ -12,6 +12,7 @@ using SSMP.Networking.Packet;
 using SSMP.Networking.Packet.Data;
 using SSMP.Networking.Packet.Update;
 using SSMP.Networking.Transport.Common;
+using SSMP.Networking.Transport.SteamP2P;
 using SSMP.Util;
 
 namespace SSMP.Networking.Client;
@@ -362,11 +363,20 @@ internal class NetClient : INetClient {
     /// <summary>
     /// Callback method for when the client connection fails.
     /// </summary>
-    private void OnConnectTimedOut() => HandleConnectFailed(
-        new ConnectionFailedResult {
-            Reason = ConnectionFailedReason.TimedOut
+    private void OnConnectTimedOut() {
+        // A Steam host on 0.4.2 or later accepts only its lobby's members; the joiner sees only the silence
+        if (_transport is SteamEncryptedTransport) {
+            Logger.Warn(
+                "Steam P2P: the host did not answer. If the host's log says it refused this Steam ID, the host can type /lobbyonly off"
+            );
         }
-    );
+
+        HandleConnectFailed(
+            new ConnectionFailedResult {
+                Reason = ConnectionFailedReason.TimedOut
+            }
+        );
+    }
 
     /// <summary>
     /// Callback method for when the client times out while connected.

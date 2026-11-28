@@ -377,6 +377,21 @@ public static class SteamManager {
     public static CSteamID GetLobbyOwner(CSteamID lobbyId) => SteamMatchmaking.GetLobbyOwner(lobbyId);
 
     /// <summary>
+    /// The Steam IDs of the current lobby's members, or null when not in a lobby.
+    /// </summary>
+    public static ulong[]? LobbyMembers() {
+        var lobbyId = CurrentLobbyId;
+        if (lobbyId == NilLobbyId) return null;
+
+        var members = new ulong[SteamMatchmaking.GetNumLobbyMembers(lobbyId)];
+        for (var i = 0; i < members.Length; i++) {
+            members[i] = SteamMatchmaking.GetLobbyMemberByIndex(lobbyId, i).m_SteamID;
+        }
+
+        return members;
+    }
+
+    /// <summary>
     /// Callback invoked when a Steam lobby is created.
     /// </summary>
     private static void OnLobbyCreated(LobbyCreated_t callback, bool ioFailure) {

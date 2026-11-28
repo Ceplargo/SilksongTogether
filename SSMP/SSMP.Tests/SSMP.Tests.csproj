@@ -20,6 +20,7 @@
         <Compile Include="..\SSMP\Game\Client\Save\PersistentApply.cs" Link="Linked\PersistentApply.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\GeoRockHold.cs" Link="Linked\GeoRockHold.cs"/>
         <Compile Include="..\SSMP\Game\Client\Save\StoredApart.cs" Link="Linked\StoredApart.cs"/>
+        <Compile Include="..\SSMP\Networking\Transport\SteamP2P\LobbyGate.cs" Link="Linked\LobbyGate.cs"/>
         <Compile Include="..\SSMP\Game\Client\ThunkSpark.cs" Link="Linked\ThunkSpark.cs"/>
         <Compile Include="..\SSMP\Game\Client\Entity\TakeoverCrawlers.cs" Link="Linked\TakeoverCrawlers.cs"/>
         <Compile Include="..\SSMP\Game\Client\MapIconRule.cs" Link="Linked\MapIconRule.cs"/>

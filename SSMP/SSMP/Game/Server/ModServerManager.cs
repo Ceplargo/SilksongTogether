@@ -39,6 +39,11 @@ internal class ModServerManager : ServerManager {
     /// </summary>
     private readonly SettingsCommand _settingsCommand;
 
+    /// <summary>
+    /// The /lobbyonly command (the Steam host's lobby-member check, 0.4.2).
+    /// </summary>
+    private readonly LobbyOnlyCommand _lobbyOnlyCommand = new();
+
 
     /// <summary>
     /// The NetServer instance to check whether the server is started.
@@ -211,6 +216,7 @@ internal class ModServerManager : ServerManager {
         base.RegisterCommands();
 
         CommandManager.RegisterCommand(_settingsCommand);
+        CommandManager.RegisterCommand(_lobbyOnlyCommand);
     }
 
     /// <inheritdoc />
@@ -218,6 +224,7 @@ internal class ModServerManager : ServerManager {
         base.DeregisterCommands();
 
         CommandManager.DeregisterCommand(_settingsCommand);
+        CommandManager.DeregisterCommand(_lobbyOnlyCommand);
 
         EventHooks.GameManagerSaveGame -= OnGameSave;
     }
